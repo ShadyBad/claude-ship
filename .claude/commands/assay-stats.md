@@ -1,6 +1,6 @@
 ---
 name: assay-stats
-description: Report whether /assay is actually earning its cost. Reads the run log written by /assay Step 14 and computes four metrics — stage fire rate, edit-after-review rate, per-judge acceptance, and first-pass approval — each with a kill threshold and an explicit sample size. Use when Brandon asks "is /assay working", "which judges are worth keeping", "is the judge panel doing anything", or before pruning the judge roster. Read-only; never modifies the log.
+description: Report whether /assay is actually earning its cost. Reads the run log written by /assay Step 14b and computes four metrics — stage fire rate, edit-after-review rate, per-judge acceptance, and first-pass approval — each with a kill threshold and an explicit sample size. Use when Brandon asks "is /assay working", "which judges are worth keeping", "is the judge panel doing anything", or before pruning the judge roster. Read-only; never modifies the log.
 argument-hint: [--since=<YYYY-MM-DD>] [--json] [--log=<path>]
 ---
 
@@ -44,8 +44,8 @@ Pass `--since=<YYYY-MM-DD>` to scope to a window, `--json` for the raw report,
 - **Stage fire rate is the first thing to check.** A stage that never fires
   makes every downstream metric about it meaningless.
 - **A low edit-after-review rate is not automatically bad at TRIVIAL/LOW
-  tier** — those runs are supposed to sail through. Scope with `--since` or
-  read the tier breakdown before cutting anything.
+  tier** — those runs are supposed to sail through. Scope with `--since`, or
+  check the tier counts in the header, before cutting anything.
 
 ## What this command does NOT do
 
