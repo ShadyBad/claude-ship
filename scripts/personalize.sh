@@ -67,6 +67,18 @@ replace "Brandon" "$NAME"
 [ -n "$PROJ1" ] && replace "auto-co" "$PROJ1"
 [ -n "$PROJ2" ] && replace "margin-invest" "$PROJ2"
 
+# Runtime config: where tickets, the glossary, and the TDD floor live on THIS
+# machine. Written once at install; personalize.sh never overwrites an existing
+# one, so re-running it is safe.
+CONFIG_PATH="$HOME/.claude/assay.config.json"
+echo
+if [ -f "$CONFIG_PATH" ]; then
+  echo "Runtime config already present: $CONFIG_PATH (left untouched)"
+else
+  python3 "$REPO_ROOT/scripts/assay_config.py" --init
+  echo "  edit it to change ticket backend, glossary path, or TDD floor"
+fi
+
 echo
 echo "Done. Diff against backup:"
 echo "  diff -ru \"$BACKUP\" \"$TARGET\""

@@ -2,6 +2,42 @@
 
 `/assay` was extracted from a personal config. Several hard-coded strings reflect the original author's setup. This file lists what to change and why.
 
+## Runtime config — `~/.claude/assay.config.json`
+
+Separate from the name/namespace rewrite below. This file is per-install state, not plugin source: it says where tickets are written, what the project glossary is called, and how hard the TDD gate bites. It lives outside the repo so a `git pull` never touches your choices.
+
+`./scripts/personalize.sh` writes it on install. Or write it yourself:
+
+```bash
+./scripts/assay_config.py --init      # shipped defaults, never clobbers
+./scripts/assay_config.py --show      # effective config (defaults + your overrides)
+./scripts/assay_config.py --validate  # exit 1 with reasons if unusable
+```
+
+Shipped defaults:
+
+```json
+{
+  "tickets":  { "backend": "repo-files", "path": "docs/tickets" },
+  "glossary": { "path": "CONTEXT.md", "adr_path": "docs/adr" },
+  "tdd":      { "min_tier": "MEDIUM" },
+  "qa":       { "queue": true }
+}
+```
+
+| Key | Values | What it changes |
+|-----|--------|-----------------|
+| `tickets.backend` | `repo-files` (default), `memory-dir` | `repo-files` writes vertical-slice tickets into the worked-on repo at `tickets.path` — versioned alongside the code they describe, visible to collaborators. `memory-dir` writes to `~/.claude/memory/projects/<ns>/tickets/` instead, keeping work-in-progress out of the repo. |
+| `tickets.path` | any relative path | Ticket directory, relative to the repo root. Ignored when the backend is `memory-dir`. |
+| `glossary.path` | any relative path | The project's ubiquitous-language file. `/assay` Step 2 loads it; `/context` maintains it. |
+| `glossary.adr_path` | any relative path | Where `/context` writes architecture decision records. |
+| `tdd.min_tier` | a risk tier, or `NEVER` | Lowest tier at which the red-green loop is mandatory and done-gate Check 9 fires. `NEVER` disables enforcement. |
+| `qa.queue` | `true` / `false` | With `true`, a shipped ticket lands in `needs-qa` for hands-on review instead of closing. |
+
+Missing file, missing key, and malformed JSON all fall back to the shipped defaults — per key, not all-or-nothing. A fresh install works with no config at all.
+
+GitHub Issues is **not** a supported backend. Tickets carry a `blocked_by` DAG that `/implement` walks on every pick; round-tripping that through the Issues API on each traversal is a lot of network for a solo loop. Use `repo-files` and open issues for the things humans need to see.
+
 ## Things hard-coded to the original author
 
 | String | Where | Why it's there | Safe to swap? |
