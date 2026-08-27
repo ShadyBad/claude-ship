@@ -1,6 +1,6 @@
 ---
 name: skill-curator
-description: Reviews all installed skills weekly to detect duplicates, stale, broken, and low-quality skills. Proposes consolidations, archives, and new skills from observed multi-step task patterns. Never auto-installs or auto-modifies — all changes are proposals that Brandon reviews. Tracks skill invocation counts in skill-stats.json. Delegates skill validation to plugin-dev plugin's skill-reviewer and plugin-validator agents when available. Use when /curate is invoked manually, when 7+ days have passed since last curator run (checked at end of every /assay), when Brandon asks "what skills do I have" or "audit my skills", or after a task that took 5+ tool calls and produced a generalizable pattern (proposes a new skill draft). Pinned skills are protected: judge-panel, project-memory, session-recall, operator-model, skill-curator, done-gate, commit-protocol, notion-bridge, mcp-router, spec-builder, postmortem. Never archives or modifies pinned skills.
+description: Reviews all installed skills weekly to detect duplicates, stale, broken, and low-quality skills. Proposes consolidations, archives, and new skills from observed multi-step task patterns. Never auto-installs or auto-modifies — all changes are proposals that Brandon reviews. Tracks skill invocation counts in skill-stats.json. Delegates skill validation to plugin-dev plugin's skill-reviewer and plugin-validator agents when available. Use when /curate is invoked manually, when 7+ days have passed since last curator run (checked at end of every /assay), when Brandon asks "what skills do I have" or "audit my skills", or after a task that took 5+ tool calls and produced a generalizable pattern (proposes a new skill draft). Pinned skills are protected: judge-panel, project-memory, session-recall, operator-model, skill-curator, done-gate, commit-protocol, notion-bridge, mcp-router, spec-builder, postmortem, ticket-board, tdd-loop, qa-queue, context-glossary, architecture-scan. Never archives or modifies pinned skills.
 ---
 
 # Skill Curator: Weekly Self-Curation Loop
@@ -35,6 +35,11 @@ These are protected from all archive/modify proposals. They are the system's fou
 - mcp-router
 - spec-builder
 - postmortem
+- ticket-board
+- tdd-loop
+- qa-queue
+- context-glossary
+- architecture-scan
 
 Proposals affecting these are silently dropped with a log entry. Brandon can modify these manually if needed.
 
