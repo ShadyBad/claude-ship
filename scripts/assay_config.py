@@ -85,9 +85,7 @@ def load(path: Path = DEFAULT_PATH) -> dict[str, Any]:
         merged[section] = dict(defaults)
         override = raw.get(section)
         if isinstance(override, dict):
-            merged[section].update(
-                {k: v for k, v in override.items() if k in defaults}
-            )
+            merged[section].update({k: v for k, v in override.items() if k in defaults})
     return merged
 
 
@@ -136,9 +134,7 @@ def validate(path: Path = DEFAULT_PATH) -> list[str]:
     cfg = load(path)
     backend = cfg["tickets"]["backend"]
     if backend not in TICKET_BACKENDS:
-        problems.append(
-            f"tickets.backend {backend!r} is not one of {sorted(TICKET_BACKENDS)}"
-        )
+        problems.append(f"tickets.backend {backend!r} is not one of {sorted(TICKET_BACKENDS)}")
     tier = str(cfg["tdd"]["min_tier"]).upper()
     if tier not in TDD_TIERS:
         problems.append(f"tdd.min_tier {tier!r} is not one of {sorted(TDD_TIERS)}")

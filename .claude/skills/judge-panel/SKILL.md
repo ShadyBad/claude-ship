@@ -1,11 +1,11 @@
 ---
 name: judge-panel
-description: Multi-judge code review system invoked before any commit by /assay command. Reviews diffs at five risk tiers (TRIVIAL, LOW, MEDIUM, HIGH, CRITICAL) using a roster of 29 specialized judges across three tiers. Use when about to commit code changes, when /assay is invoked, when a diff needs review, or when Brandon explicitly requests "judge this" or "review this diff". Tier 1 judges focus on code quality and delegate to pr-review-toolkit agents where possible. Tier 2 judges focus on systemic risks (security, threat modeling, cost). Tier 3 judges apply business and product wisdom for strategic decisions. Risk tier determines which subset is invoked. Brandon can override with --judges, --no-judges, or --risk flags. Returns aggregate verdict of ship, revise, or block with structured concerns.
+description: Multi-judge code review system invoked before any commit by /assay command. Reviews diffs at five risk tiers (TRIVIAL, LOW, MEDIUM, HIGH, CRITICAL) using a roster of 29 specialized judges across three tiers. Use when about to commit code changes, when /assay is invoked, when a diff needs review, or when Brandon explicitly requests "judge this" or "review this diff". Tier 1 judges focus on code quality and run as fresh-context subagents. Tier 2 judges focus on systemic risks (security, threat modeling, cost). Tier 3 judges apply business and product wisdom for strategic decisions. Risk tier determines which subset is invoked. Brandon can override with --judges, --no-judges, or --risk flags. Returns aggregate verdict of ship, revise, or block with structured concerns.
 ---
 
 # Judge Panel: 29-Judge Code Review System
 
-This skill is the core review mechanism invoked by `/assay` before any commit. It scales judge invocation to risk tier, parallelizes calls where possible, and delegates to plugin agents (`pr-review-toolkit`, `ecc`'s reviewer agents) to minimize token cost.
+This skill is the core review mechanism invoked by `/assay` before any commit. It scales judge invocation to risk tier, parallelizes calls where possible, and runs every judge in a fresh context so no agent reviews its own reasoning.
 
 ## Relationship to other review-shaped skills
 
@@ -15,7 +15,7 @@ This is the sole review entry point for anything ship-bound — any `/assay` inv
 - **`ecc:security-review`** — a narrower auth/secrets/API-endpoint checklist, not a full diff review. Legitimately different lens from the Tier 2 security judge here; can run alongside, not instead of.
 - **`ecc:security-scan`** — scans the Claude Code *configuration* (`.claude/`, CLAUDE.md, hooks, MCP servers) via AgentShield, not application code. Different subject entirely.
 - **`ecc:quality-gate`** — a single-file formatter check driven by a PostToolUse hook, not a code review. Different subject entirely.
-- **`pr-review-toolkit:code-reviewer`** — already a delegate this skill calls internally, not an independent competitor.
+- **built-in `code-review` skill** — the engine several Tier 1 judges run on, not an independent competitor.
 
 ## Invocation Contract
 
@@ -41,12 +41,12 @@ The skill returns:
 
 ### Tier 1 — Code Quality Judges (16)
 
-Tier 1 judges focus on the diff itself. For MEDIUM and above, 3-5 are invoked. For HIGH and above, all relevant ones. Tier 1 judges delegate to `pr-review-toolkit` agents where the function matches. The `pr-review-toolkit` plugin's 6 specialized agents cover comments, tests, error handling, type design, code quality, and code simplification — these map directly to judges 1, 3, 4, 13, 15, 16 below.
+Tier 1 judges focus on the diff itself. For MEDIUM and above, 3-5 are invoked. For HIGH and above, all relevant ones. Judges 1, 15, 16, and 14 run on the built-in `code-review` skill scoped to their rubric; the rest run as `general-purpose` subagents carrying their persona verbatim.
 
-1. **Senior Staff Engineer** — code quality, maintainability, abstraction level, mental model alignment. Delegate to `pr-review-toolkit:code-quality-reviewer` when available.
-2. **Security Reviewer** — auth, secrets, injection, OWASP top 10. Delegate to `ecc:security-reviewer` or `ecc:vulnerability-scanner` agent.
+1. **Senior Staff Engineer** — code quality, maintainability, abstraction level, mental model alignment.
+2. **Security Reviewer** — auth, secrets, injection, OWASP top 10. Runs on the built-in `security-review` skill.
 3. **Performance Engineer** — latency, memory, query patterns, N+1, complexity.
-4. **Test Architect** — coverage, edge cases, test isolation, flake-resistance. Delegate to `pr-review-toolkit:test-reviewer`.
+4. **Test Architect** — coverage, edge cases, test isolation, flake-resistance.
 5. **API Designer** — interface contracts, versioning, backward compatibility, RFC-style naming.
 6. **Data Engineer** — schema, migrations, query plans, indexing, denormalization tradeoffs.
 7. **DevOps Engineer** — deploy safety, rollback, observability, blast radius if it goes wrong.
@@ -55,17 +55,17 @@ Tier 1 judges focus on the diff itself. For MEDIUM and above, 3-5 are invoked. F
 10. **Backend Specialist** — service boundaries, error handling, idempotency, retries.
 11. **Database Specialist** — transactions, isolation level, consistency guarantees, locking.
 12. **Concurrency Reviewer** — race conditions, deadlocks, async correctness, ordering.
-13. **Error Handler** — failure modes, retry logic, user-facing messages, fail-loud vs fail-quiet. Delegate to `pr-review-toolkit:error-handling-reviewer`.
+13. **Error Handler** — failure modes, retry logic, user-facing messages, fail-loud vs fail-quiet.
 14. **Documentation Reviewer** — README, inline comments where needed, ADRs for non-obvious decisions.
-15. **Naming Critic** — variables, functions, files, modules. Match domain language. Delegate to `pr-review-toolkit:comments-reviewer` for comment naming concerns.
-16. **Simplicity Judge** — would a junior engineer understand this in 30 seconds? Delegate to `pr-review-toolkit:code-simplification-reviewer`.
+15. **Naming Critic** — variables, functions, files, modules. Must match the project's `CONTEXT.md` glossary: a diff that coins a second name for an already-named concept is a finding, not a preference.
+16. **Simplicity Judge** — would a junior engineer understand this in 30 seconds?
 
 ### Tier 2 — Systemic Risk Judges (5)
 
 Tier 2 judges are invoked for HIGH and CRITICAL changes. They assess risks beyond the diff itself.
 
 17. **Karpathy** — surfaces silent assumptions, calls out overengineering, asks "would this be in the minimum code?" Pulls from `andrej-karpathy-skills` plugin context.
-18. **Threat Modeler** — STRIDE analysis on auth/data flows. Delegate to `ecc:threat-modeler` agent if available.
+18. **Threat Modeler** — STRIDE analysis on auth/data flows. Runs on the built-in `security-review` skill with a systemic scope.
 19. **Cost Accountant** — token cost (LLM API), infra cost (compute/storage), third-party API call budget. Estimates per-request and per-month.
 20. **Regulatory Reviewer** — GDPR for EU data, SOC2 controls, financial reporting rules for margin-invest, vehicle data regulations for auto-co.
 21. **Failure Mode Analyst** — what breaks when X dependency fails? Blast radius? Cascade risk? Recovery procedure?
@@ -93,7 +93,7 @@ Each judge runs on a model matched to the reasoning depth its concern demands, n
 | **Sonnet** (`claude-sonnet-4-6`) | 3 Performance, 4 Test Architect, 5 API Designer, 6 Data Engineer, 7 DevOps, 10 Backend, 11 Database, 19 Cost Accountant | Substantive review where Sonnet's signal is close to Opus at lower cost. |
 | **Haiku** (`claude-haiku-4-5`) | 8 Accessibility, 9 Frontend, 14 Documentation, 15 Naming Critic, 16 Simplicity | Nit-class / pattern-matching concerns; cheap model is sufficient. |
 
-Override precedence: a judge's assigned model here wins over the tier default model from `/assay` Step 4. When a judge delegates to a `pr-review-toolkit` / `ecc` agent (see Delegation Priority below), pass the same assigned model to that agent dispatch. Hard floor: judges named in the Hard Constraints (Security, Karpathy on HIGH/CRITICAL) always run at their Opus assignment — never downgraded.
+Override precedence: a judge's assigned model here wins over the tier default model from `/assay` Step 4. Pass the assigned model to the judge's subagent dispatch (see Judge Dispatch below). Hard floor: judges named in the Hard Constraints (Security, Karpathy on HIGH/CRITICAL) always run at their Opus assignment — never downgraded.
 
 ## Concern-Detection Pre-Pass (diff-aware gating)
 
@@ -228,34 +228,41 @@ Log for later:
 All judges approved. Ready to commit.
 Tokens used: <count>
 
-## Delegation Priority
+## Judge Dispatch
 
-When a Tier 1 judge has a `pr-review-toolkit` equivalent, prefer delegation:
+Every judge runs as its own subagent with a fresh context, carrying only the
+diff, a two-sentence task summary, and its own rubric from the roster below.
+Fresh context is the point: an implementing agent reviewing its own work in the
+same session is reading its own reasoning back, and will confirm it.
 
-| Judge | Delegated to | Plugin |
-|-------|-------------|--------|
-| Senior Staff Engineer | code-quality-reviewer | pr-review-toolkit |
-| Test Architect | test-reviewer | pr-review-toolkit |
-| Error Handler | error-handling-reviewer | pr-review-toolkit |
-| Naming Critic (comments) | comments-reviewer | pr-review-toolkit |
-| Simplicity Judge | code-simplification-reviewer | pr-review-toolkit |
-| Security Reviewer | security-reviewer or vulnerability-scanner | ecc |
-| Threat Modeler | threat-modeler | ecc (if available) |
-| Documentation Reviewer | type-design-reviewer (for type docs) | pr-review-toolkit |
+Dispatch via the Agent tool (`general-purpose`), or via the built-in
+`code-review` and `security-review` skills where a judge's rubric matches what
+those already do:
 
-For judges without a plugin equivalent (Performance Engineer, Database Specialist, all Tier 2 systemic, all Tier 3 business), use direct prompts with judge-specific personas.
+| Judge | Runs as |
+|-------|---------|
+| Senior Staff Engineer, Simplicity, Naming Critic, Documentation | built-in `code-review` skill, scoped to that judge's rubric |
+| Security Reviewer, Threat Modeler | built-in `security-review` skill |
+| Everyone else | `general-purpose` subagent carrying the judge's persona and rubric verbatim |
 
-If a delegation target plugin is not installed, fall back to direct prompt with the judge's full role description.
+This previously delegated to `pr-review-toolkit` and `ecc` reviewer agents.
+Those plugins are uninstalled and the delegation is removed, not degraded —
+which costs more tokens per judge than the old path, so keep the diff-aware
+gating tight to compensate.
 
-## Plugin Compatibility
+## Two Axes
 
-This skill requires no plugins to function at minimum (will use direct prompts for every judge). It is enhanced by:
-- `pr-review-toolkit` — delegation targets for 6 Tier 1 judges.
-- `ecc` — delegation targets for security and threat-modeling judges.
-- `superpowers` — subagent dispatch for parallel judge calls.
-- `caveman` — diff compression before passing to judges.
+Every judge answers on two axes, and a pass on one is not a pass:
 
-If any are missing, log the degradation in the result and continue.
+- **Standards** — does this meet the codebase's bar? Naming, error handling,
+  test quality, security posture.
+- **Spec** — does it do what the ticket or spec said, and nothing the Non-goals
+  excluded? A judge that never reads the acceptance criteria cannot
+   catch the most expensive failure, which is well-built code that solves a
+   slightly different problem.
+
+Judges receive the spec's Success criteria and the ticket's Acceptance bullets
+alongside the diff. A finding on the spec axis outranks any standards nit.
 
 ## Token Budget Guidelines
 
@@ -285,6 +292,8 @@ After 3 such dismissals of the same combination, the `operator-model` skill shou
 
 - NEVER auto-bypass the panel for HIGH or CRITICAL changes, even if Brandon's history suggests he would approve.
 - NEVER reveal one judge's output to another judge (each must reason independently).
+- NEVER let the agent that wrote the diff also judge it. A fresh context per judge is the mechanism, not a nicety.
+- NEVER return `ship` on a standards-clean diff that misses the spec. The spec axis is not optional.
 - NEVER skip the Security Reviewer for changes touching auth, secrets, user data, or financial calculation, regardless of tier or override.
 - NEVER skip Karpathy (judge 17) on HIGH or CRITICAL — overengineering check is non-negotiable.
 - ALWAYS produce a verdict, even if some judges time out. Note timeouts in the output.

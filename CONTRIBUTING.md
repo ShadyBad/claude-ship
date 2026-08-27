@@ -36,6 +36,8 @@ that keep the plugin loadable and the docs honest:
 | `test_judge_panel.py` | The judge-panel roster actually contains the 29 judges it claims. |
 | `test_docs_links.py` | Every relative link in the docs resolves to a real file. |
 | `test_hooks.py` | Every hook/script has a shebang and the executable bit. |
+| `test_config.py` | The per-install config reader degrades to defaults on an absent, partial, or corrupt file. |
+| `test_pipeline_wiring.py` | No dangling cross-references: the lifecycle commands exist, done-gate documents nine checks, `/assay` invokes the TDD loop, every config key is documented, and nothing still delegates to an uninstalled plugin. |
 
 If you add a skill, command, or doc, the harness will tell you what's
 inconsistent before CI does.

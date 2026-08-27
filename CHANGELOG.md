@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The lifecycle layer.** Four commands above `/assay`, splitting the work
+  where it actually divides: `/spec` (grill), `/to-tickets` (vertical slices),
+  `/implement` (batch execution), `/qa` (hands-on pass). `/assay` becomes the
+  per-ticket executor and gains a ticket-id invocation form.
+- **`tdd-loop` skill and done-gate Check 9.** A captured, inspected failing-test
+  run is now required before any implementation edit at or above
+  `tdd.min_tier`. Import and fixture errors are rejected as false reds.
+- **`ticket-board` skill.** Vertical slices with a `blocked_by` DAG, validated
+  acyclic before writing. Horizontal slice sets are rejected and re-sliced.
+- **`qa-queue` skill.** Shipped slices land in `needs-qa`, which does not
+  unblock dependents. Findings become tickets, never in-session fixes.
+- **`context-glossary` skill and `/context`.** A `CONTEXT.md` glossary loaded on
+  every `/assay` run, plus ADR capture.
+- **`architecture-scan` skill and `/architecture`.** Deep-vs-shallow module scan
+  with proposal-only output.
+- **Per-install config** at `~/.claude/assay.config.json` (`scripts/assay_config.py`),
+  covering ticket backend, glossary paths, TDD floor, and QA queueing.
+- `tests/test_config.py` and `tests/test_pipeline_wiring.py` — the latter fails
+  the build on dangling cross-references and live delegations to uninstalled
+  plugins.
+
+### Changed
+- `spec-builder` replaces its batch seven-question interrogation with a
+  one-question-at-a-time grill (minimum 8, target 12-20), and the spec template
+  gains Implementation choices and Testing seams.
+- `judge-panel` judges now run as fresh-context subagents on built-in
+  capability, and answer on two axes (standards and spec).
+- `/assay` Step 3 enforces a vertical-slice constraint; Step 2 loads the
+  glossary; Step 12 proposes new glossary terms.
+
+### Removed
+- All live delegation to uninstalled plugins: `superpowers:brainstorming`,
+  `superpowers:writing-plans`, `superpowers:subagent-driven-development`,
+  `ecc:prp-prd`, and the `pr-review-toolkit` / `ecc` judge reviewer agents.
+  These were steps that silently did nothing.
+
 ## [0.1.1] - 2026-06-29
 
 ### Added
