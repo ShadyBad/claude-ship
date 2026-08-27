@@ -1,7 +1,7 @@
 ---
 name: assay
-description: Master orchestrator. Runs the full 14-step pipeline from task parse through commit and learn. Coordinates all custom skills (spec-builder, judge-panel, project-memory, session-recall, operator-model, skill-curator, notion-bridge, mcp-router, done-gate, commit-protocol) and key plugins (superpowers ecosystem, commit-commands, github). Use whenever Brandon wants to make a meaningful change to a project — code, docs, configuration, or strategy artifacts. Two invocation forms: /assay "<task description>" for direct execution, or /assay <spec-id> to consume an approved spec produced by /spec. Supports flags for risk classification, judge control, MCP control, check skipping, and commit behavior. Saves state on interrupt for /assay resume.
-argument-hint: <spec-id> | "<task description>" [--judges] [--no-judges] [--risk=<tier>] [--mcps=<list>] [--skip-tests] [--skip-lint] [--skip-types] [--force] [--commit-message=<msg>] [--amend] [--no-push] [--auto-push] [--deploy] [--no-deploy] [--dry-run]
+description: Master orchestrator. Runs the full 14-step pipeline from task parse through commit and learn. Coordinates all custom skills (spec-builder, ticket-board, tdd-loop, context-glossary, judge-panel, project-memory, session-recall, operator-model, skill-curator, notion-bridge, mcp-router, done-gate, commit-protocol) and the ticket board built by /to-tickets. Use whenever Brandon wants to make a meaningful change to a project — code, docs, configuration, or strategy artifacts. Three invocation forms: /assay "<task description>" for direct execution, /assay <spec-id> to consume an approved spec produced by /spec, or /assay <ticket-id> to execute one vertical slice from the board built by /to-tickets. Supports flags for risk classification, judge control, MCP control, check skipping, and commit behavior. Saves state on interrupt for /assay resume.
+argument-hint: <spec-id> | <ticket-id> | "<task description>" [--judges] [--no-judges] [--risk=<tier>] [--mcps=<list>] [--skip-tests] [--skip-lint] [--skip-types] [--no-tdd] [--force] [--commit-message=<msg>] [--amend] [--no-push] [--auto-push] [--deploy] [--no-deploy] [--dry-run]
 ---
 
 # /assay — Master Orchestrator
@@ -33,6 +33,7 @@ Parse the invocation arguments before starting the pipeline. The first argument 
 | `--skip-tests` | Bypass done-gate Checks 2 and 3. Requires note explaining why. |
 | `--skip-lint` | Bypass done-gate Check 5. |
 | `--skip-types` | Bypass done-gate Check 6. |
+| `--no-tdd` | Bypass the Step 7 red-green loop and done-gate Check 9. Logged to the run record so the bypass rate stays measurable. |
 | `--force` | Bypass all done-gate checks except Check 8 (Brandon approval). Logged to force-bypass-log. Emergency use only. |
 | `--commit-message="<msg>"` | Use exact message in commit-protocol. Skip generation. |
 | `--amend` | Amend last commit instead of new commit. |
@@ -49,7 +50,9 @@ If `--force` and `--no-judges` are both set and risk tier is HIGH/CRITICAL, refu
 
 ### Step 1: PARSE
 
-**Spec-id resolution (runs first).** If the first positional argument matches the pattern `<slug>-\d{4}-\d{2}-\d{2}(-\d+)?` (e.g. `parallelize-walkforward-2026-05-17` or `add-sharpe-engine-2026-05-17-2`), treat it as a spec-id from the `spec-builder` skill:
+**Id resolution order.** A ticket-id (`<slug>-<date>-NN`) also matches the spec-id pattern, since the slice suffix is indistinguishable from a spec collision suffix. So resolve by **lookup, not by regex**: check the configured ticket directory first for an exact filename match, and only if none exists treat the argument as a spec-id. When both exist — a spec collision `-02` and a slice `-02` of the same spec — surface both and ask; never guess, because the two run very differently.
+
+**Spec-id resolution.** If the first positional argument matches the pattern `<slug>-\d{4}-\d{2}-\d{2}(-\d+)?` (e.g. `parallelize-walkforward-2026-05-17` or `add-sharpe-engine-2026-05-17-2`), treat it as a spec-id from the `spec-builder` skill:
 
 1. Detect namespace using the same rules as project-memory (`.claude/project-name` → git remote → cwd → `personal`).
 2. Resolve to `$HOME/.claude/memory/projects/<ns>/specs/<spec-id>.md`. If not found in current namespace, search across all namespaces and surface the match.
@@ -61,7 +64,17 @@ If `--force` and `--no-judges` are both set and risk tier is HIGH/CRITICAL, refu
 5. Snapshot the spec into the session state directory (`$HOME/.claude/memory/sessions/<YYYY-MM-DD>-<session-id>/spec-snapshot.md`). Lock for the duration of this /assay run.
 6. Use the spec's `title` as task description, `risk-tier` as the locked risk tier (skip Step 4 RISK CLASSIFY unless `--risk=` overrides), and Success criteria as inputs to done-gate Check 1.
 
-If the first argument is not a spec-id pattern, fall through to task-description parsing below.
+**Ticket-id resolution.** If the first positional argument resolves to a file in the configured ticket directory, treat it as a ticket from the `ticket-board` skill:
+
+1. Resolve the ticket backend and path from `~/.claude/assay.config.json` (`tickets.backend`, `tickets.path`) via `scripts/assay_config.py`. Never hardcode.
+2. Load the ticket's frontmatter (`ticket-id`, `spec`, `title`, `status`, `kind`, `tier`, `blocked_by`, `seam`, `branch`) and its Slice / Acceptance / Out of scope sections.
+3. Refuse if any id in `blocked_by` is not `done`: "Ticket `<id>` is blocked by `<ids>`. Run those first, or `/to-tickets board` to see the graph." A `needs-qa` blocker is still a blocker.
+4. Refuse if status is `done`. Warn if `in-progress` — a previous run may still hold the branch.
+5. Use `title` as the task description, `tier` as the locked risk tier (skip Step 4 unless `--risk=` overrides), Acceptance bullets as done-gate Check 1 inputs, and `seam` as the target for the Step 7 TDD loop.
+6. Mark the ticket `in-progress` and check out its `branch`, creating it if absent. Never run a ticket on a branch that already carries another ticket's work.
+7. If the ticket names a `spec`, load that spec's Implementation choices and Non-goals as constraints — the slice inherits them.
+
+If the first argument is neither a spec-id nor a ticket-id, fall through to task-description parsing below.
 
 **Task-description parsing (default).** Parse the task description. Extract:
 - Primary verb (build, fix, refactor, research, design, ship, deploy).
@@ -76,6 +89,7 @@ Output a structured task spec used by later steps. If task description is too va
 Context load is **conditional**, not paid on every run. The triple-memory load (lessons + recall + prefs) is a fixed token tax whose payoff lands on maybe 1 ship in 5; gate it so cheap/isolated work skips it.
 
 1. **operator-model** — ALWAYS load. Cheap, high-value, applies to every change. Apply the Things Brandon Hates filter to suppress patterns he has rejected.
+1b. **context-glossary** — ALWAYS load, all tiers. Read the project glossary at `glossary.path` (default `CONTEXT.md`). It is small and it prevents this run from coining a second name for a concept the project already named. Above ~150 lines, load the headings plus each entry's `Is:` line and read full entries on demand.
 2. **project-memory** — load `lessons.md` and surface 3-5 relevant lessons ONLY when tier ≥ MEDIUM, OR the task names a subsystem with known prior lessons. TRIVIAL/LOW skip.
 3. **session-recall** — search past sessions (3-tier fallback: episodic-memory MCP → project-memory grep → ripgrep) ONLY when the task signals prior art: keywords like "again", "like we did", "continue", "same as", or an explicit ticket/PR/spec reference. Otherwise skip.
 
@@ -88,14 +102,18 @@ Invoke whatever is gated-in **in parallel**. Output: a context bundle (always pr
 Generate a plan for the task.
 
 - For TRIVIAL/LOW tasks: a 3-bullet plan inline.
-- For MEDIUM tasks: invoke `superpowers:brainstorming` plugin if available, else generate 5-10 step plan inline.
-- For HIGH/CRITICAL tasks: invoke `superpowers:writing-plans` plugin to produce a structured plan with risk analysis, fallback paths, and test strategy.
+- For MEDIUM tasks: a 5-10 step plan inline.
+- For HIGH/CRITICAL tasks: a structured plan with risk analysis, fallback paths, and test strategy. Use the `Plan` agent for the design pass when the surface is unfamiliar.
 
 The plan must include:
 - Approach (1-2 sentences).
 - Affected files (best guess).
-- Test strategy (write new tests, modify existing, skip with reason).
+- Test strategy — the seam the first failing test drives, not "unit tests". At or above `tdd.min_tier` this is the input to Step 7's red-green loop, so a plan whose test strategy names no seam is incomplete.
 - Estimated tool call count (rough budget).
+
+**Vertical-slice constraint (all tiers).** A plan whose steps are layer names — "add the schema", "then the service methods", "then the endpoint" — is horizontal, and horizontal work hides every integration failure until the last step. Order the plan so the first step is the thinnest path that crosses every layer the change touches, and every later step widens something that already runs.
+
+If the plan cannot be arranged that way in one reviewable diff, that is the signal the task is more than one commit: stop and say so. Route to `/to-tickets <spec-id>` for slicing rather than building it horizontally under one commit. When this run was invoked with a ticket-id, the slicing already happened — the constraint is already satisfied and this paragraph is a no-op.
 
 **Breadth-First Heuristic (HIGH/CRITICAL).** Anthropic finding: agents default to overly long, specific queries that return few results. For HIGH/CRITICAL plans, force a breadth-first pass first:
 
@@ -157,12 +175,12 @@ Output: risk tier + effort budget + tier model locked for the rest of the pipeli
 Decide execution strategy:
 
 - TRIVIAL/LOW: execute inline (single agent).
-- MEDIUM: execute inline unless plan has 3+ independent subtasks → invoke `superpowers:subagent-driven-development` for parallelization.
-- HIGH/CRITICAL: always invoke `superpowers:subagent-driven-development`. Each subagent gets only its slice of context.
+- MEDIUM: execute inline unless the plan has 3+ independent subtasks → dispatch parallel subagents via the Agent tool.
+- HIGH/CRITICAL: always dispatch subagents. Each gets only its slice of context.
 
-If subagent-driven-development plugin is not installed, fall back to sequential inline execution. Note in final report.
+Subagents are dispatched with the Agent tool (`general-purpose` unless a specialized type fits). There is no plugin dependency here.
 
-**Structured Delegation Brief (mandatory for every dispatched subagent).** Anthropic finding: vague tasks cause duplicate work, scope gaps, and misinterpretation. Every actual subagent dispatch (via the Agent/Task tool, `superpowers:subagent-driven-development`, or equivalent) must include all four fields. Inline lead execution does NOT require a brief — the lead already has the plan and operator-model in context. The brief exists to compress what the lead knows into what a fresh subagent needs.
+**Structured Delegation Brief (mandatory for every dispatched subagent).** Anthropic finding: vague tasks cause duplicate work, scope gaps, and misinterpretation. Every actual subagent dispatch must include all four fields. Inline lead execution does NOT require a brief — the lead already has the plan and operator-model in context. The brief exists to compress what the lead knows into what a fresh subagent needs.
 
 ```
 objective:     <one sentence stating the exact outcome. Not "research X" — "produce a list of all callers of function X with file:line refs">
@@ -194,6 +212,23 @@ Run the plan.
   - The operator-model summary.
 
 Subagents return results. Orchestrator merges and resolves conflicts.
+
+**Red-green loop (mandatory at or above `tdd.min_tier`).** Before any implementation edit, invoke the **tdd-loop** skill. Read the floor from `~/.claude/assay.config.json` (`tdd.min_tier`, default `MEDIUM`); `--no-tdd` bypasses and is logged.
+
+Per behavior in the plan, one cycle:
+
+1. Write one failing test at the seam — from the ticket's `seam` field, or the spec's Testing seams table.
+2. Run it, capture the real failure into `state.json.tdd`, and **inspect the reason**. An `ImportError`, `SyntaxError`, missing fixture, or collection error is a false red: it proves the file did not load, not that the behavior was absent. Fix the test until it fails on its assertion.
+3. Write the least implementation that turns that one test green. Do not touch the test during this step — if the test now looks wrong, stop and revise it deliberately with a fresh red proof, because quietly reshaping an assertion to match the code is invisible in the final diff.
+4. Run the test, the affected suite, the linter, and the type checker; capture the green proof. Lint and types run per-cycle, not at the end, so an error surfaces while the context that caused it is still live.
+
+One behavior per cycle. Batching tests before implementing collapses back into implement-then-test.
+
+Exempt regardless of tier: docs, config, comment-only diffs, pure renames, dead-code deletion. Bug fixes are never exempt — the failing test is the bug report.
+
+Subagents doing implementation work carry the cycle in their delegation brief and return the proofs in their artifact.
+
+**If a cycle fails twice, do not write a longer prompt.** An agent's ceiling is the quality of the codebase's feedback loops. Ask which loop is inadequate — is the failure message actionable, is the test fast enough to actually be run, does a seam exist at all — and log the answer as a lesson in Step 12. A feedback-loop gap found on one ticket taxes every future ticket in the same area.
 
 **README creation hook.** If the task creates or overhauls a repo's GitHub README (new project homepage, rebrand, visual upgrade), invoke the `beautify-github-readme` skill when available — README mode for whole-homepage work, asset-only mode for a hero/badge/diagram set. Degrade gracefully to plain Markdown if the skill is absent. This never blocks EXECUTE.
 
@@ -251,11 +286,13 @@ After 2 revision cycles, if judges still block: STOP and surface to Brandon. Do 
 
 ### Step 10: DONE GATE
 
-Invoke **done-gate** to run all 8 checks. Risk-tier adjustments from done-gate's SKILL.md apply.
+Invoke **done-gate** to run all 9 checks. Risk-tier adjustments from done-gate's SKILL.md apply.
+
+Check 9 (red before green) reads `state.json.tdd` and fails on a missing proof or a false red. It is bypassed by `--no-tdd` and by `tdd.min_tier: NEVER`, both logged.
 
 **Diff snapshot (after).** Record the final changeset stat into `state.json.diff_after_review` as `{files, added, deleted}` — this is the post-judge, post-revise shape of the diff. Also record which judge concerns were actually acted on: for each judge in `state.json.judges`, set `accepted` to the count of that judge's concerns that produced a change in the diff or an explicit "will fix" from Brandon. A concern Brandon waved off is raised-but-not-accepted, and that distinction is the entire point of the judge acceptance metric — do not inflate it.
 
-Honor skip flags: `--skip-tests`, `--skip-lint`, `--skip-types`, `--force`. Each logged.
+Honor skip flags: `--skip-tests`, `--skip-lint`, `--skip-types`, `--no-tdd`, `--force`. Each logged.
 
 If any check fails: surface failure, halt pipeline, save state.
 
@@ -286,6 +323,13 @@ If commit fails (pre-commit hook rejection): surface, offer auto-fix, do not byp
 
 If the spec file has been edited since the snapshot (mtime diverges), surface to Brandon: "Spec `<spec-id>` was modified during the ship run. Apply status update anyway? (yes/no/diff)." Default no — abort the status flip but keep the commit.
 
+**Ticket status flip (only when this /assay was invoked with a ticket-id).** On commit success:
+
+1. If `qa.queue` is `true` in `~/.claude/assay.config.json` (the default), set the ticket's status to `needs-qa` and leave it there. `needs-qa` does not unblock its dependents — work does not stack on a slice nobody has laid hands on yet.
+2. If `qa.queue` is `false`, set status to `done` directly.
+3. Record the commit SHA in the ticket frontmatter and regenerate `_board.md` from the ticket files.
+4. If this was the last ticket for its spec and none remain in `todo`, `in-progress`, or `needs-qa`, apply the spec status flip above.
+
 ### Step 11.5: DEPLOY → CANARY (optional — deploy tasks only)
 
 Closes the loop to production. Skipped by default: most repos in this tree are frozen (margin_invest decommissioned; aie_roadmap/shadybad non-deploying). Fires ONLY when opted in — any of: `--deploy` set, task primary verb ∈ {deploy, release, land}, or the project defines `.claude/deploy.md`. No trigger → skip silently to Step 12.
@@ -311,6 +355,7 @@ After successful commit:
 1. **project-memory** — extract lessons from this run. Append to project's `lessons.md`. Format: `[<date>] <project>: <takeaway>`.
 2. **operator-model** — if Brandon corrected, overrode, or rejected anything during the pipeline, update operator-model with the new signal.
 3. **session-recall** — write session summary to `$HOME/.claude/memory/sessions/<date>-<session-id>/`.
+4. **context-glossary** — scan the shipped diff for concepts the glossary does not name (`/context extract`). Proposals only, capped at 5, never blocking. A term that had to be explained twice during this run is the strongest candidate.
 
 These updates are append-only. Never overwrite existing lessons or operator-model entries.
 
@@ -505,10 +550,9 @@ The skill is opportunistic — it runs after state is already safe on disk. Bran
 
 Required: none — the orchestrator degrades gracefully when plugins are missing.
 
+Planning (Step 3), subagent dispatch (Step 5), and parallel execution (Step 7) run on built-in capability: the `Plan` and `Explore` agents and the Agent tool. They previously delegated to `superpowers:*` plugins; that wiring is removed, not degraded.
+
 Enhanced by (in order of impact):
-- `superpowers:brainstorming` — better plans for MEDIUM tasks.
-- `superpowers:writing-plans` — structured plans for HIGH/CRITICAL.
-- `superpowers:subagent-driven-development` — parallel execution.
 - `plugin-dev` — used downstream by skill-curator.
 - `commit-commands` — commit primitives.
 - `github` — PR creation.
@@ -520,6 +564,7 @@ Enhanced by (in order of impact):
 ## Quick Reference
 /assay "<task>"                          # Default. Auto risk, judges per tier, ask-before-push.
 /assay <spec-id>                         # Consume approved spec. Status, risk-tier, success criteria pre-loaded.
+/assay <ticket-id>                       # Execute one vertical slice from the board. Tier, seam, acceptance pre-loaded.
 /assay <spec-id> --force                 # Re-ship a previously-shipped spec (rare; usually write a new spec instead).
 /assay "<task>" --risk=high              # Force HIGH tier.
 /assay "<task>" --no-judges              # Skip judges (TRIVIAL/LOW only).
@@ -530,5 +575,6 @@ Enhanced by (in order of impact):
 /assay "<task>" --deploy                 # After commit, run deploy → canary (Step 11.5). Explicit deploy approval still required.
 /assay "<task>" --no-deploy              # Suppress deploy → canary even for a deploy-verb task.
 /assay "<task>" --dry-run                # Run through done-gate, show diff + verdict, halt before commit. Resume to commit.
+/assay "<task>" --no-tdd                 # Skip the red-green loop and Check 9. Logged to the run record.
 /assay resume                            # Resume last interrupted session (or finish a dry-run).
 /assay-stats                             # Read the run log back: stage fire rates, judge acceptance, approval.

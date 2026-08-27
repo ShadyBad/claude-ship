@@ -1,15 +1,15 @@
 ---
 name: done-gate
-description: Enforces the completion contract from CLAUDE.md before any commit can proceed. Checks success criteria, tests, lint, type check (via pyright-lsp for Python), no TODO/debug leftovers, judge-panel verdict, and Brandon's commit approval. If any check fails, blocks the commit with the specific failure and the minimum fix. Use at the end of every /assay before invoking commit-protocol, when Brandon asks "is this ready to commit", or when any agent attempts to commit code. Can be augmented by hookify plugin for hook-layer enforcement that fires even outside /assay. Eight checks total, all must pass.
+description: Enforces the completion contract from CLAUDE.md before any commit can proceed. Checks success criteria, tests, lint, type check, no TODO/debug leftovers, a captured red-before-green TDD proof, judge-panel verdict, and Brandon's commit approval. If any check fails, blocks the commit with the specific failure and the minimum fix. Use at the end of every /assay before invoking commit-protocol, when Brandon asks "is this ready to commit", or when any agent attempts to commit code. Nine checks total, all must pass.
 ---
 
 # Done Gate Skill
 
 Enforces the completion contract from CLAUDE.md. This is the last line of defense before any commit. If a check fails, the gate blocks and explains exactly what failed and the minimum fix.
 
-## The Eight Checks
+## The Nine Checks
 
-The completion contract from CLAUDE.md, enforced as 8 sequential checks. ALL must pass.
+The completion contract from CLAUDE.md, enforced as 9 sequential checks. ALL must pass.
 
 ### Check 1: Success Criteria
 
@@ -100,6 +100,40 @@ Blocking concerns:
 - <judge>: <concern>
 Address before commit, or override with `/assay --no-judges` (requires Brandon explicit override)."
 
+### Check 9: Red Before Green
+
+Applies when the run's risk tier is at or above `tdd.min_tier` in
+`~/.claude/assay.config.json` (default `MEDIUM`), and the diff is not
+docs-only, config-only, comment-only, a pure rename, or a deletion.
+
+Read `state.json.tdd`. For every behavior in the diff:
+
+1. An entry exists.
+2. The entry has a `red` proof with a non-zero exit code.
+3. The red's `reason` is an **assertion failure**, not an `ImportError`,
+   `SyntaxError`, `fixture not found`, `NameError`, or collection error. Those
+   are false reds — they prove the file did not load, not that the behavior was
+   absent.
+4. The entry has a `green` proof with exit code 0, plus clean lint and types.
+5. No entry has `green: null` without an explanation.
+
+This is the check that makes test-first real. Without it, "tests exist and
+pass" (Checks 2 and 3) is satisfiable by writing the implementation first and
+then writing a test shaped to agree with it — which asserts the implementation
+rather than the requirement, and will keep passing straight through the
+regression it was meant to catch.
+
+Fail mode: "TDD proof missing or invalid:
+- <behavior>: no red proof captured
+- <behavior>: red was `ImportError: cannot import name 'Pool'` — a false red;
+  the test never exercised the behavior
+Re-run the cycle for these behaviors, or bypass with `/assay --no-tdd` (logged
+to the run record)."
+
+Bypassed by `--no-tdd` and by `tdd.min_tier: NEVER`. Both are logged to
+`state.json` and to the Step 14b run record — a bypass nobody can count becomes
+the norm.
+
 ### Check 8: Brandon Approval
 
 - commit-protocol skill has shown Brandon a brief commit overview.
@@ -109,13 +143,13 @@ Fail mode: "Awaiting Brandon's approval. Showing commit overview now."
 
 ## Check Sequence
 
-Run checks 1-7 in order. If any fail, STOP and surface the failure. Do not run later checks.
+Run checks 1-7 and 9 in order — 9 runs after 7, immediately before the approval flow. If any fail, STOP and surface the failure. Do not run later checks.
 
-Check 8 is the final step: only after 1-7 pass does the gate hand off to commit-protocol for the approval flow.
+Check 8 is the final step: only after the others pass does the gate hand off to commit-protocol for the approval flow. It is numbered 8 because Brandon's approval has always been the last thing that happens, and the completion contract in CLAUDE.md refers to it by that number.
 
 ## Output Format
 
-If all 8 pass:
+If all 9 pass:
 DONE GATE: ALL CHECKS PASSED ✓
 
 Criteria: stated and measurable
@@ -124,6 +158,7 @@ Debug code: none
 Lint: clean
 Type check: clean (<N> files)
 Judge panel: <verdict> (<tier>)
+TDD: <N> behaviors, each red-then-green
 Approval: received from Brandon
 
 Ready to commit.
@@ -158,6 +193,7 @@ For when Brandon needs to bypass specific checks (rare, high-trust situations):
 - `/assay --skip-lint "<task>"` — bypasses Check 5. Rare.
 - `/assay --skip-types "<task>"` — bypasses Check 6.
 - `/assay --no-judges "<task>"` — bypasses Check 7 (only for TRIVIAL/LOW changes; HIGH/CRITICAL still enforces).
+- `/assay --no-tdd "<task>"` — bypasses Check 9. Logged to the run record alongside the tier, so the bypass rate is measurable.
 - `/assay --force "<task>"` — bypasses ALL checks except 8 (Brandon approval). Logged loudly. Used for emergency hotfixes only.
 
 `--force` bypass is logged to `$HOME/.claude/memory/global/force-bypass-log.md` with timestamp, project, task, and reason. Reviewed by skill-curator weekly.
@@ -166,16 +202,19 @@ For when Brandon needs to bypass specific checks (rare, high-trust situations):
 
 Some checks are skipped automatically by risk tier (matching CLAUDE.md's risk tier guidance):
 
-- TRIVIAL: only Checks 4, 5, 8 (debug code, lint, approval). Skip tests, types, judges.
-- LOW: Checks 1, 4, 5, 6, 7, 8. Skip test requirement if change is comment-only.
-- MEDIUM: all 8 checks.
-- HIGH: all 8 checks + enforce that judge-panel result is signed (verdict logged with judge list).
-- CRITICAL: all 8 checks + require commit-protocol to show Brandon the full judge panel report before approval.
+- TRIVIAL: only Checks 4, 5, 8 (debug code, lint, approval). Skip tests, types, judges, TDD.
+- LOW: Checks 1, 4, 5, 6, 7, 8. Skip test requirement if change is comment-only. TDD not enforced at the default floor.
+- MEDIUM: all 9 checks.
+- HIGH: all 9 checks + enforce that judge-panel result is signed (verdict logged with judge list).
+- CRITICAL: all 9 checks + require commit-protocol to show Brandon the full judge panel report before approval.
+
+Check 9's floor is configurable independently of these: `tdd.min_tier` moves it up or down, or `NEVER` removes it.
 
 ## Integration with Other Skills
 
 - **/assay** — invokes done-gate after judge-panel returns, before commit-protocol.
-- **judge-panel** — feeds verdict into Check 7.
+- **judge-panel** — feeds verdict into Check 7. Its Test Architect judge is the backstop for a red proof that was captured but is weak.
+- **tdd-loop** — writes `state.json.tdd`, which Check 9 reads.
 - **commit-protocol** — receives handoff after Check 7 passes; manages Check 8.
 - **hookify** — provides deterministic enforcement at the hook layer.
 - **skill-curator** — reviews force-bypass-log weekly; if same kind of bypass repeats 3+ times, proposes adjustment.
@@ -191,7 +230,8 @@ Required: none. Without pyright-lsp, Check 6 falls back to system pyright/mypy o
 
 ## Hard Constraints
 
-- NEVER allow a commit to proceed if any of Checks 1-7 fail without explicit Brandon override.
+- NEVER allow a commit to proceed if any of Checks 1-7 or 9 fail without explicit Brandon override.
+- NEVER accept a red proof whose failure is an import, syntax, fixture, or collection error. That is a false red and Check 9 must fail on it.
 - NEVER skip Check 7 (judge-panel) for HIGH or CRITICAL changes, even with --no-judges flag.
 - NEVER skip Check 8 (Brandon approval). The engineer-in-the-loop pattern is non-negotiable.
 - NEVER silently bypass checks. Every skip is logged.
