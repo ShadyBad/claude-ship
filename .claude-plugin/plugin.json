@@ -1,6 +1,6 @@
 {
   "name": "assay",
-  "description": "/assay — a 14-step ship pipeline orchestrator for Claude Code. Wires together a spec builder, judge panel, risk-tier classifier, MCP router, done-gate, commit protocol, postmortem, and project + session memory into a single command. Includes /spec, /postmortem, /morning, /eod, /weekly, /cross-learn commands and 12 supporting skills. Use to take a fuzzy goal → crisp spec → risk-classified plan → reviewed diff → engineer-in-the-loop commit → captured lessons. Patterns adapted from Anthropic's multi-agent research system (effort budgets, structured delegation briefs, artifact refs, long-horizon hand-off).",
+  "description": "/assay \u2014 a 14-step ship pipeline orchestrator for Claude Code. Wires together a spec builder, judge panel, risk-tier classifier, MCP router, done-gate, commit protocol, postmortem, and project + session memory into a single command. Includes /spec, /context, /postmortem, /morning, /eod, /weekly, /cross-learn commands and 13 supporting skills. Use to take a fuzzy goal \u2192 crisp spec \u2192 risk-classified plan \u2192 reviewed diff \u2192 engineer-in-the-loop commit \u2192 captured lessons. Patterns adapted from Anthropic's multi-agent research system (effort budgets, structured delegation briefs, artifact refs, long-horizon hand-off).",
   "version": "0.1.1",
   "author": {
     "name": "Brandon Shay",
@@ -21,6 +21,10 @@
     "memory",
     "multi-agent"
   ],
-  "commands": ["./.claude/commands"],
-  "skills": ["./.claude/skills"]
+  "commands": [
+    "./.claude/commands"
+  ],
+  "skills": [
+    "./.claude/skills"
+  ]
 }
