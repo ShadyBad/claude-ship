@@ -34,6 +34,7 @@ Parse the invocation arguments before starting the pipeline. The first argument 
 | `--skip-lint` | Bypass done-gate Check 5. |
 | `--skip-types` | Bypass done-gate Check 6. |
 | `--no-tdd` | Bypass the Step 7 red-green loop and done-gate Check 9. Logged to the run record so the bypass rate stays measurable. |
+| `--no-spec` | Skip the Step 1 spec escalation gate. Run a MEDIUM+ task with no measurable outcome or named seam. Logged to the run record. |
 | `--force` | Bypass all done-gate checks except Check 8 (Brandon approval). Logged to force-bypass-log. Emergency use only. |
 | `--commit-message="<msg>"` | Use exact message in commit-protocol. Skip generation. |
 | `--amend` | Amend last commit instead of new commit. |
@@ -82,7 +83,40 @@ If the first argument is neither a spec-id nor a ticket-id, fall through to task
 - Project context (auto-co, margin-invest, personal, or unspecified — infer from cwd).
 - Explicit scope hints (file paths, function names, ticket numbers mentioned).
 
-Output a structured task spec used by later steps. If task description is too vague (under 8 words and no explicit scope), ask Brandon for one clarifying detail. Otherwise proceed.
+Output a structured task spec used by later steps.
+
+**Spec escalation gate.** A bare task description carries no measurable success criteria and no testing seam. That is not a cosmetic gap: done-gate Check 1 then has nothing to check against and asks Brandon to state criteria *after* the work exists — the one moment he is guaranteed to agree with whatever got built — and Step 7's TDD loop has to invent its own seam, which is the improvisation the loop exists to prevent.
+
+So test the parsed task on two questions:
+
+1. **Observable outcome?** Does the task name something checkable from outside the code — a number, a test that passes, a behavior someone can watch? "Fix the retry backoff so a failed fetch stops after 3 attempts" passes. "Improve error handling" does not.
+2. **Nameable seam?** Can you point at the function, endpoint, CLI, or fixture a test would drive? If the answer requires reading the repo first, it is a no at this stage.
+
+Combine with a tier pre-estimate from the parsed verb, subject, and scope hints (the same estimate Step 2 uses for its context-load gate):
+
+| Pre-estimate | Both answers yes | Either answer no |
+|--------------|------------------|------------------|
+| TRIVIAL / LOW | Proceed. | Proceed — ask one clarifying question if the task is under 8 words with no explicit scope. |
+| MEDIUM+ | Proceed. | **Escalate**: recommend `/spec` and default to yes. |
+
+Escalation prompt:
+
+```
+This is a <tier> change and the task has no <measurable outcome | testing seam>.
+Without one, done-gate Check 1 has nothing to verify and the TDD loop has no
+seam to write its first failing test against.
+
+Recommend: /spec "<task>"   — a grill, then /assay <spec-id>
+  spec    run the grill now, then come back here  (recommended)
+  proceed continue without a spec; criteria get stated at the gate
+  abort
+```
+
+Default is `spec`. `proceed` is one word away — this is a recommendation with a good default, not a wall.
+
+Bypass with `--no-spec`, which is logged to the run record alongside the tier so the escape rate is visible in `/assay-stats`. Never escalate when the run was invoked with a spec-id or a ticket-id: both already carry criteria and a seam. Never escalate more than once per run.
+
+Escalation is a **judgment**, not a regex. A well-formed one-line task at MEDIUM tier that names its outcome and its seam proceeds; a 40-word paragraph that names neither does not.
 
 ### Step 2: CONTEXT LOAD
 
@@ -404,18 +438,18 @@ Record shape (only `project`, `risk_tier`, and `outcome` are required; omit what
   "project": "margin-invest",
   "task": "<one-line task summary>",
   "risk_tier": "HIGH",
-  "invocation": "task | spec",
-  "flags": ["--dry-run"],
+  "invocation": "task | spec | ticket",
+  "flags": ["--dry-run", "--no-spec"],
   "outcome": "committed",
-  "stages_eligible": ["context-load", "plan", "judge-panel", "done-gate", "commit-protocol", "learn"],
-  "stages_fired": ["context-load", "plan", "judge-panel", "done-gate", "commit-protocol", "learn"],
+  "stages_eligible": ["spec-escalation", "context-load", "plan", "tdd-loop", "judge-panel", "done-gate", "commit-protocol", "learn"],
+  "stages_fired": ["context-load", "plan", "tdd-loop", "judge-panel", "done-gate", "commit-protocol", "learn"],
   "judges": [
     {"judge": "security", "model": "opus", "verdict": "block", "concerns": 2, "accepted": 1}
   ],
   "diff_before_review": {"files": 3, "added": 88, "deleted": 12},
   "diff_after_review":  {"files": 3, "added": 94, "deleted": 12},
   "done_gate_blocked_on": [4],
-  "done_gate_skipped": ["tests"],
+  "done_gate_skipped": ["tests", "tdd"],
   "brandon_verdict": "approved_first_pass | approved_after_rework | abandoned | unknown",
   "rework_turns": 2,
   "duration_s": 410,
@@ -430,6 +464,7 @@ Rules:
 - **Never fabricate a field.** `brandon_verdict` defaults to `unknown` and `unknown` runs are excluded from the approval metric — that is correct behavior, not a gap to paper over. A guessed value silently poisons every later reading.
 - **`accepted` ≤ `concerns` per judge**, counting only concerns that changed the diff or drew an explicit "will fix." The recorder rejects records that violate this.
 - **`stages_eligible` is the honest denominator** — list a stage only if this run's tier and flags meant it *should* have run. A stage skipped by design (judges at TRIVIAL, context-load at LOW) is not eligible and must not be listed.
+- **The two discipline stages are the ones worth watching.** `spec-escalation` is eligible on any MEDIUM+ task-invocation run and fires only when the gate actually escalated; `tdd-loop` is eligible whenever the tier is at or above `tdd.min_tier` and the diff is not exempt. Eligible-but-never-fired on either is the signal that a gate has quietly become decorative — which is exactly what `/assay-stats` exists to catch.
 
 Read the numbers back with `/assay-stats`.
 
@@ -494,6 +529,7 @@ The skill is opportunistic — it runs after state is already safe on disk. Bran
 | 1 PARSE | Task too vague | Ask Brandon one clarifying question. |
 | 1 PARSE | Spec-id not found in current namespace | Search other namespaces; surface match or refuse with "Spec `<spec-id>` not found." |
 | 1 PARSE | Spec status is `draft` | Refuse. Tell Brandon to run `/spec approve <spec-id>` first. |
+| 1 PARSE | MEDIUM+ task with no measurable outcome or named seam | Escalate to `/spec`, defaulting to yes. `proceed` continues; `--no-spec` skips the gate. Logged either way. |
 | 1 PARSE | Spec status is `shipped` | Warn. Allow only with `--force`. |
 | 11 COMMIT | Spec mtime diverged from snapshot | Surface to Brandon. Default: keep commit, skip status flip. |
 | 2 CONTEXT | Memory file corrupt | Log warning. Continue with empty context. |
@@ -576,5 +612,6 @@ Enhanced by (in order of impact):
 /assay "<task>" --no-deploy              # Suppress deploy → canary even for a deploy-verb task.
 /assay "<task>" --dry-run                # Run through done-gate, show diff + verdict, halt before commit. Resume to commit.
 /assay "<task>" --no-tdd                 # Skip the red-green loop and Check 9. Logged to the run record.
+/assay "<task>" --no-spec                # Skip the Step 1 escalation to /spec on a fuzzy MEDIUM+ task. Logged.
 /assay resume                            # Resume last interrupted session (or finish a dry-run).
 /assay-stats                             # Read the run log back: stage fire rates, judge acceptance, approval.

@@ -41,6 +41,8 @@ flowchart LR
   class I machine
 ```
 
+Calling `/assay "<task>"` directly still works, and on a MEDIUM+ task with no observable outcome or nameable seam it will recommend `/spec` first — because otherwise done-gate asks you to state success criteria *after* the code exists, which is the one moment you're guaranteed to agree with whatever got built. `proceed` is one word away; `--no-spec` skips the gate outright. Both choices are logged.
+
 **`/spec`** grills you one question at a time — minimum eight, each with a recommended answer you accept with `y` — until both mental models agree. It pushes on retroactivity, migration, 3am failure, reversal, and every unpinned number, then writes a PRD with pinned implementation choices and named testing seams.
 
 **`/to-tickets`** cuts it into thin vertical slices. Each crosses every layer it touches, so integration is proven at the first commit rather than the last. A set with a ticket titled after a layer gets discarded and re-sliced, loudly. Tickets carry a `blocked_by` DAG, which is what makes parallel branches safe.

@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with proposal-only output.
 - **Per-install config** at `~/.claude/assay.config.json` (`scripts/assay_config.py`),
   covering ticket backend, glossary paths, TDD floor, and QA queueing.
+- **Spec escalation gate** in `/assay` Step 1. A MEDIUM+ task with no
+  observable outcome or nameable seam now recommends `/spec` first, defaulting
+  to yes. Without it, done-gate Check 1 asks for success criteria after the
+  work exists, and the TDD loop has to invent its own seam. `--no-spec`
+  bypasses; both the escalation and the bypass are logged.
+- `spec-escalation` and `tdd-loop` are recordable stages, so a gate that goes
+  decorative shows up in `/assay-stats` as eligible-but-never-fired.
 - `tests/test_config.py` and `tests/test_pipeline_wiring.py` — the latter fails
   the build on dangling cross-references and live delegations to uninstalled
   plugins.

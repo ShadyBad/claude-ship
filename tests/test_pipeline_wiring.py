@@ -141,3 +141,28 @@ def test_config_keys_are_documented():
         if f"{section}.{key}" not in doc
     ]
     assert not missing, f"CONFIG.md does not document: {missing}"
+
+
+def test_discipline_stages_are_recordable():
+    """The two gates that can quietly go decorative must be measurable.
+
+    A spec escalation that stops firing, or a TDD loop that stops running,
+    looks identical to a pipeline that is working — unless the stage is in the
+    recorder's vocabulary and shows up as eligible-but-never-fired.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "assay_record", ROOT / "scripts" / "assay_record.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for stage in ("spec-escalation", "tdd-loop"):
+        assert stage in mod.STAGES, f"{stage} is not a recordable stage"
+
+
+def test_assay_documents_the_spec_escalation_gate():
+    """A bare task has no success criteria and no seam; Step 1 must say so."""
+    text = (COMMANDS_DIR / "assay.md").read_text()
+    assert "Spec escalation gate" in text
+    assert "--no-spec" in text, "the escalation gate has no documented bypass"

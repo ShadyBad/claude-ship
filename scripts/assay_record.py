@@ -48,9 +48,11 @@ VERDICTS = {
 # Pipeline stages whose fire rate is worth tracking. Keys are the names /assay
 # uses in its own step list; the value is the step number for readability.
 STAGES = {
+    "spec-escalation": 1,
     "context-load": 2,
     "plan": 3,
     "mcp-route": 6,
+    "tdd-loop": 7,
     "judge-panel": 8,
     "revise": 9,
     "done-gate": 10,
