@@ -1,6 +1,6 @@
 ---
 name: spec-builder
-description: Transforms a fuzzy goal into a crisp, /assay-consumable spec. Wires superpowers:brainstorming (divergent exploration), ecc:prp-prd (interrogation), and operator-model (Brandon's constraint bias) into a single interview that produces a 1-page spec at $HOME/.claude/memory/projects/<ns>/specs/<spec-id>.md with status draft|approved|shipped. Use when Brandon types /spec, when a /assay task arrives without measurable success criteria, when Brandon says "I want to build X but I'm not sure what", or when an idea has been kicking around long enough to deserve a written hypothesis. Coordinates with project-memory (loads relevant prior lessons), session-recall (surfaces prior similar specs), and judge-panel (risk-tier classification for downstream /assay). Pinned. Never silently overwrites an existing spec — collisions get a numeric suffix.
+description: Transforms a fuzzy goal into a crisp, /assay-consumable spec via a relentless grilling session — one question at a time, each with a recommended answer, until Brandon's mental model and Claude's agree. Wires divergent framing, the grill loop, and operator-model (Brandon's constraint bias) into a single interview that produces a 1-page spec at $HOME/.claude/memory/projects/<ns>/specs/<spec-id>.md with status draft|approved|shipped. Use when Brandon types /spec, when a /assay task arrives without measurable success criteria, when Brandon says "I want to build X but I'm not sure what", or when an idea has been kicking around long enough to deserve a written hypothesis. Output feeds /to-tickets for vertical slicing. Coordinates with project-memory (loads relevant prior lessons), session-recall (surfaces prior similar specs), context-glossary (terms coined during the grill), and judge-panel (risk-tier classification for downstream /assay). Pinned. Never silently overwrites an existing spec — collisions get a numeric suffix.
 ---
 
 # spec-builder
@@ -18,7 +18,8 @@ The missing step between fuzzy goal and `/assay`. Most bad ships come from shipp
 
 ```
 /spec "<fuzzy goal>"                    # full interrogation
-/spec "<fuzzy goal>" --quick            # skip brainstorming, jump to prp-prd
+/spec "<fuzzy goal>" --quick            # skip framing, go straight to the grill
+/spec "<fuzzy goal>" --deep             # raise the grill floor to 12 questions
 /spec "<fuzzy goal>" --namespace=<ns>   # override detection
 /spec "<fuzzy goal>" --risk=<tier>      # pre-set risk classification
 /spec list                              # show all specs in current namespace
@@ -60,32 +61,94 @@ In parallel:
 
 If session-recall finds a prior spec with status `draft` or `approved` on the same topic: stop and ask Brandon "Looks like spec `<spec-id>` covers similar ground (status: `<status>`). Revise it, or write a new one?" Default action: revise existing.
 
-### Step 4: DIVERGE (skipped if --quick)
+### Step 4: FRAME (skipped if --quick)
 
-Invoke `superpowers:brainstorming` plugin with:
-- Fuzzy goal.
-- Loaded operator-model constraints (so brainstorming respects "no premature optimization", "walk-forward before tuning", etc.).
-- The 3-5 surfaced lessons from Step 3.
+Before grilling the plan, check we are solving the right problem. Produce 3-5
+alternative **framings** of the goal — not solutions, framings. "What problem
+are we actually solving?"
 
-Goal: produce 3-5 alternative framings of the goal. Not solutions — framings. "What problem are we actually solving?" Brandon picks one (or types a new framing). The picked framing replaces the original fuzzy goal as the spec subject.
+Each framing is one sentence plus the thing it would make true. Bias them with
+the operator-model constraints and the 3-5 lessons surfaced in Step 3, so no
+framing violates something Brandon already rejected.
 
-If `superpowers:brainstorming` plugin is unavailable: degrade to a single prompt — "Here are 3 ways I could read this goal: [A] [B] [C]. Which one, or describe a different framing?"
+```
+Three ways I can read this goal:
+  [A] <framing> — succeeds when <observable>
+  [B] <framing> — succeeds when <observable>
+  [C] <framing> — succeeds when <observable>
+Pick one, or describe a fourth.
+```
 
-### Step 5: INTERROGATE
+Brandon picks one (or types a new framing). The picked framing replaces the
+original fuzzy goal as the spec subject, and becomes the thing the grill
+attacks.
 
-Invoke `ecc:prp-prd` skill with the picked framing.
+### Step 5: GRILL
 
-The interrogation must surface answers to:
+The heart of the skill. **Interview Brandon relentlessly, one question at a
+time.** Not a form. Not a batch of seven questions — a batch gets one skim and
+produces a spec that agrees with itself and nothing else.
 
-1. **Problem** — What hurts? Who feels it? Why now? (1-3 sentences)
-2. **Hypothesis** — What is the proposed fix and why will it work? (1 paragraph)
-3. **Success criteria** — Three measurable outcomes. At least one must be quantitative (a number, a test passing, a metric moving).
-4. **Non-goals** — Three things this is explicitly NOT doing. Forces scope discipline.
-5. **Constraints** — What is fixed? Pull from operator-model (no premature optimization, etc.) and project context (margin_invest frozen, aie_roadmap is tracking only, etc.).
-6. **Risks / Ways this could be wrong** — Adversarial. Minimum 3 bullets. Mandatory per margin-invest-backtest convention in project CLAUDE.md.
-7. **Plan sketch** — High-level steps (3-7 bullets). Not a full plan — that's `/assay`'s job in Step 3 PLAN. Just enough to estimate scope.
+The purpose is not to fill in sections. It is to **align two mental models**
+before a line of code exists. A grilled spec exposes the edge cases neither
+Brandon nor Claude had considered — whether a feature is retroactive, what
+happens to existing rows, which of two plausible readings of "done" is meant.
+Those are exactly the questions that, unasked, become a rewrite in Step 9.
 
-If `ecc:prp-prd` plugin is unavailable: ask the 7 questions directly, one at a time.
+**Loop protocol.** Repeat until the exit condition:
+
+1. Ask exactly **one** question.
+2. Attach a **recommended answer** and the reason for it. Brandon accepts with
+   `y`, overrides with prose, or defers with `skip`. A question with no
+   recommendation makes Brandon do the work — the recommendation is what makes
+   a 30-question grill cost 5 minutes instead of an hour.
+3. Record the answer. If the answer contradicts an earlier one, say so
+   immediately and resolve it before moving on. Silent contradictions are how a
+   spec ends up unbuildable.
+4. Pick the next question from the highest-uncertainty area remaining, not from
+   a fixed list. Follow the answer that surprised you.
+
+**Question budget.** Minimum 8 questions, target 12-20, `--deep` raises the
+floor to 12. Below 8, the spec is a transcription of what Brandon already said
+and the grill did nothing.
+
+**Exit condition** — all three must hold:
+
+- Every section of the spec template can be filled without guessing.
+- Claude can state the change's edge cases back to Brandon and Brandon agrees.
+- The last three questions produced no new information.
+
+Then state: "I think I have it. Here's what I heard —" and summarize in 5
+bullets before writing anything. Brandon corrects the summary; that correction
+is worth more than the previous ten answers.
+
+**Question sources.** Push hardest on the areas that are cheapest to get wrong
+now and most expensive later:
+
+| Area | The question behind the questions |
+|------|-----------------------------------|
+| Retroactivity | Does this apply to data that already exists, or only new data? |
+| Boundaries | What is the smallest version that is still worth shipping? |
+| Failure | What should happen when this breaks at 3am? |
+| Migration | What happens to the thing this replaces? |
+| Observability | How will you know it worked, from outside the code? |
+| Concurrency | What if two of these run at once? |
+| Reversal | If this is wrong, how do we undo it? |
+| Numbers | Every threshold, limit, timeout, and level — pin them now. |
+| Vocabulary | What do we call this thing? (routes to context-glossary) |
+| Seams | Where exactly does a test grab hold of this? |
+
+The last two are new outputs, not just spec inputs:
+
+- **Vocabulary** — any term coined or clarified during the grill is handed to
+  `context-glossary` at write time, so the spec, the tickets, and the code all
+  use the same word from the first commit.
+- **Seams** — the answers become the spec's Testing Seams section, which is
+  what makes the downstream `/tdd` loop able to write a failing test at all.
+
+**Do not skip the grill to be polite.** Brandon typing a long initial goal is
+not a substitute; a detailed wrong assumption is more expensive than a vague
+one, because it looks finished.
 
 ### Step 6: SYNTHESIZE
 
@@ -184,6 +247,26 @@ shipped-commit:
 - <From project — e.g. margin_invest is frozen, don't touch>
 - <From session — e.g. <2 hours of work>
 
+## Implementation choices
+
+<Every decision the grill pinned down. Schemas, thresholds, levels, timeouts,
+enum values, defaults, retention windows. One line each, stated as a fact:
+"Retry backoff is 3 attempts at 1s/4s/16s." No prose, no rationale — the
+rationale that mattered became an ADR.>
+
+- <choice 1>
+- <choice 2>
+
+## Testing seams
+
+<Where and how this gets verified — the seam a test grabs hold of. This is
+what /tdd writes its first failing test against, so it must name a real
+boundary, not an intention. "Tested by unit tests" is not a seam.>
+
+| Behavior | Seam | Kind |
+|----------|------|------|
+| <what must be true> | <function, endpoint, CLI, or fixture the test drives> | unit / integration / e2e / manual |
+
 ## Risks / Ways this could be wrong
 
 - <Adversarial bullet 1>
@@ -249,8 +332,9 @@ This is what makes a spec a contract, not just a doc.
 
 | Failure | Default behavior |
 |---------|------------------|
-| `superpowers:brainstorming` missing | Degrade to single-prompt 3-framing list. |
-| `ecc:prp-prd` missing | Ask 7 questions inline. |
+| Brandon answers `skip` repeatedly | After 3 consecutive skips, stop the grill and say what cannot be filled in without those answers. Do not guess. |
+| Grill exits under 8 questions | Refuse to write. Say which sections are still guesses. |
+| Contradictory answers | Surface immediately, resolve before continuing. Never write a spec containing both. |
 | operator-model file missing | Continue without constraint bias. Log warning. |
 | Namespace directory creation fails | Surface error. Do not write spec. |
 | Spec-id collision (same slug, same day) | Append `-2`, `-3`, etc. until unique. |
@@ -263,15 +347,23 @@ This is what makes a spec a contract, not just a doc.
 - NEVER overwrite a `shipped` spec. Revising creates a new draft on the same id; ship history is preserved.
 - NEVER skip the Risks section. Inherited from margin-invest-backtest convention — every spec must end with an adversarial section.
 - NEVER infer success criteria. If Brandon refuses to give a measurable outcome, abort the spec with "Without measurable success criteria, /assay cannot verify done. Walk away or come back with a number."
-- ALWAYS load operator-model before interrogation. Brandon's constraints bias the questions.
+- NEVER write a spec whose Testing seams section says how it will be tested rather than where. A seam names a boundary a test can drive.
+- NEVER batch grill questions. One at a time, each with a recommendation, or the alignment does not happen.
+- ALWAYS load operator-model before the grill. Brandon's constraints bias the questions.
 - ALWAYS append to `_index.md` so `/spec list` and `/assay`'s spec-id resolution stay cheap.
 
-## Plugin dependencies
+## Dependencies
 
-- `superpowers:brainstorming` — Step 4 divergent framing. Graceful degrade.
-- `ecc:prp-prd` — Step 5 interrogation. Graceful degrade.
-- `operator-model` skill — Step 3 constraint loading.
+- `operator-model` skill — Step 3 constraint loading, and the bias behind every recommended answer.
 - `project-memory` skill — Step 3 lesson loading.
 - `session-recall` skill — Step 3 prior-spec search.
+- `context-glossary` skill — receives terms coined during the grill (Step 5), at write time.
 
-All other skills (judge-panel, done-gate, commit-protocol, notion-bridge) interact with this skill only through `/assay` once the spec is approved.
+The grill and the framing step run inline. They previously delegated to
+`superpowers:brainstorming` and `ecc:prp-prd`; both plugins are uninstalled and
+the delegation is gone, not degraded — a batch-of-seven interrogation was the
+wrong shape anyway.
+
+Downstream: an approved spec is consumed by `/to-tickets` (vertical slicing) or
+directly by `/assay <spec-id>`. Other skills (judge-panel, done-gate,
+commit-protocol, notion-bridge) interact with this skill only through those.
