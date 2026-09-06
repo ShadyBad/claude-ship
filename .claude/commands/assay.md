@@ -34,6 +34,8 @@ Parse the invocation arguments before starting the pipeline. The first argument 
 | `--skip-lint` | Bypass done-gate Check 5. |
 | `--skip-types` | Bypass done-gate Check 6. |
 | `--no-tdd` | Bypass the Step 7 red-green loop and done-gate Check 9. Logged to the run record so the bypass rate stays measurable. |
+| `--no-survey` | Skip the Step 8.5 branch survey and the Step 13 cadence survey for this run. Logged. |
+| `--survey` | Force the Step 8.5 branch survey even when `survey.in_pipeline` is false or the tier is TRIVIAL. |
 | `--no-spec` | Skip the Step 1 spec escalation gate. Run a MEDIUM+ task with no measurable outcome or named seam. Logged to the run record. |
 | `--force` | Bypass all done-gate checks except Check 8 (Brandon approval). Logged to force-bypass-log. Emergency use only. |
 | `--commit-message="<msg>"` | Use exact message in commit-protocol. Skip generation. |
@@ -308,6 +310,36 @@ Judges output verdict: `ship` | `revise` | `block`.
 - revise — go to Step 9.
 - block — halt pipeline, surface blocking concerns, save state.
 
+### Step 8.5: BRANCH SURVEY (automatic — the diff's neighborhood)
+
+Runs after the judges report and before REVISE, when `survey.in_pipeline` is
+true and the tier is LOW or above. `--no-survey` skips it; `--survey` forces it.
+Recorded as the `survey-branch` stage.
+
+Judges see one diff. They do not see the neighborhood the diff landed in — the
+module it now depends on that has no tests, the duplicate it just became the
+third copy of, the credential sitting two functions away. That gap is the
+cheapest thing in this pipeline to close, because the diff is already in hand.
+
+Invoke the **survey** skill in `branch` scope at `quick` effort: files changed
+since the merge-base with the default branch, plus their direct importers.
+Every finding is tagged:
+
+- **`introduced`** — this diff created it. Merge into the judge concerns and
+  send it through REVISE like any other must-address item.
+- **`pre-existing`** — it was already in a file this diff touched. Write it to
+  the findings queue. These **never block the ship.** A slice does not inherit
+  the debt of the file it edited, and blaming it for that is how a two-line fix
+  turns into a refactor nobody asked for.
+
+The distinction is the whole value of the step. Without it the survey either
+blocks good work over legacy debt, or stays quiet about debt because a slice
+happened to touch it.
+
+Findings here are queued, never auto-promoted — a mid-ship survey has the least
+context of any survey the system runs, and the board is not the place to find
+out it was wrong.
+
 ### Step 9: REVISE
 
 Address judge feedback marked `must_address_before_ship`.
@@ -393,6 +425,26 @@ After successful commit:
 
 These updates are append-only. Never overwrite existing lessons or operator-model entries.
 
+### Step 12.5: CADENCE SURVEY (post-ship, async — off the critical path)
+
+Same contract as CURATE CHECK below: it fires after the report is delivered, it
+is detached, and it NEVER blocks the commit, the report, or Brandon. Recorded as
+the `survey-cadence` stage.
+
+Read `$HOME/.claude/memory/projects/<ns>/last-survey-run.txt`. If it is missing
+or older than `survey.cadence_days` (default 7), fire the **survey** skill in
+`hotspots` scope at `quick` effort as a detached background pass, then stamp
+the file. Under the cadence, do nothing — skip entirely.
+
+Findings land in the queue and surface at the next SessionStart. Auto-promotion
+applies only if `survey.auto` is `promote`, and is capped by
+`survey.max_promote_per_cycle`.
+
+A survey failure is logged in the report and ignored. Discovery that can halt a
+ship is worse than no discovery — the same rule the run recorder lives under.
+
+`--no-survey` skips this stage.
+
 ### Step 13: CURATE CHECK (post-ship, async — off the critical path)
 
 Curation is skill hygiene, not part of shipping a change. It NEVER blocks commit, the report, or Brandon. The per-run `propose` mode is removed (it taxed every ship for a rare payoff).
@@ -417,6 +469,8 @@ Commit: <SHA> <message>
 Push: <pushed | local-only>
 Lessons captured: <count>
 Operator model updates: <count>
+Survey: <n introduced (in revise) · n pre-existing queued | skipped>
+Findings queue: <n pending> (review with /survey queue)
 Curator: <async pass running | N proposals | skipped (<7d)>
 Notion-eligible artifacts: <count> (local; push with /share <artifact>)
 Next: <suggested next action if applicable>
@@ -441,11 +495,16 @@ Record shape (only `project`, `risk_tier`, and `outcome` are required; omit what
   "invocation": "task | spec | ticket",
   "flags": ["--dry-run", "--no-spec"],
   "outcome": "committed",
-  "stages_eligible": ["spec-escalation", "context-load", "plan", "tdd-loop", "judge-panel", "done-gate", "commit-protocol", "learn"],
-  "stages_fired": ["context-load", "plan", "tdd-loop", "judge-panel", "done-gate", "commit-protocol", "learn"],
+  "stages_eligible": ["spec-escalation", "context-load", "plan", "tdd-loop", "judge-panel", "judge-vet", "survey-branch", "done-gate", "commit-protocol", "learn"],
+  "stages_fired": ["context-load", "plan", "tdd-loop", "judge-panel", "judge-vet", "survey-branch", "done-gate", "commit-protocol", "learn"],
   "judges": [
-    {"judge": "security", "model": "opus", "verdict": "block", "concerns": 2, "accepted": 1}
+    {"judge": "security", "model": "opus", "verdict": "block", "concerns": 2, "accepted": 1, "dropped": 3}
   ],
+  "survey": {
+    "scope": "branch",
+    "findings_raw": 9, "findings_after_vet": 4,
+    "findings_promoted": 0, "findings_queued": 4, "findings_rejected": 5
+  },
   "diff_before_review": {"files": 3, "added": 88, "deleted": 12},
   "diff_after_review":  {"files": 3, "added": 94, "deleted": 12},
   "done_gate_blocked_on": [4],
@@ -462,8 +521,10 @@ Rules:
 
 - **Never block on it.** A recorder failure is logged in the report and ignored. Instrumentation that can halt a ship is worse than no instrumentation.
 - **Never fabricate a field.** `brandon_verdict` defaults to `unknown` and `unknown` runs are excluded from the approval metric — that is correct behavior, not a gap to paper over. A guessed value silently poisons every later reading.
-- **`accepted` ≤ `concerns` per judge**, counting only concerns that changed the diff or drew an explicit "will fix." The recorder rejects records that violate this.
+- **`accepted` ≤ `concerns` per judge**, counting only concerns that changed the diff or drew an explicit "will fix." The recorder rejects records that violate this. `concerns` is the **post-vet** count; `dropped` carries what Step 8's VET pass threw out, and `dropped / (dropped + concerns)` is the number that identifies a judge worth cutting.
+- **The survey funnel only narrows.** `findings_after_vet` ≤ `findings_raw`, and promoted + queued ≤ vetted. The recorder rejects a widening funnel, because vetting removes findings and cannot add them — a funnel that grows is a miscount, not a discovery.
 - **`stages_eligible` is the honest denominator** — list a stage only if this run's tier and flags meant it *should* have run. A stage skipped by design (judges at TRIVIAL, context-load at LOW) is not eligible and must not be listed.
+- **Watch the discovery stages too.** `survey-branch` is eligible on any LOW+ run while `survey.in_pipeline` holds; `survey-cadence` is eligible only when the stamp is actually stale. A vet-survival rate trending to zero means the audit is manufacturing noise and its categories need narrowing — which is a decision to make from the log, not from an argument.
 - **The two discipline stages are the ones worth watching.** `spec-escalation` is eligible on any MEDIUM+ task-invocation run and fires only when the gate actually escalated; `tdd-loop` is eligible whenever the tier is at or above `tdd.min_tier` and the diff is not exempt. Eligible-but-never-fired on either is the signal that a gate has quietly become decorative — which is exactly what `/assay-stats` exists to catch.
 
 Read the numbers back with `/assay-stats`.
@@ -542,6 +603,8 @@ The skill is opportunistic — it runs after state is already safe on disk. Bran
 | 9 REVISE | 2 cycles exceeded | Halt. Surface unresolved blockers. |
 | 10 DONE GATE | Any check fails | Halt. Show fix. |
 | 11 COMMIT | Hook rejection | Surface. Offer auto-fix. Never bypass. |
+| 8.5 SURVEY | Branch survey errors or times out | Log it in the report. Continue to REVISE with the judge concerns alone. Never block. |
+| 12.5 SURVEY | Cadence survey fails | Log. Do not re-stamp `last-survey-run.txt`, so the next ship retries. Never block. |
 | 12 LEARN | Memory write fails | Retry once. Then log error. Do not block. |
 | 13 CURATE | Curator errors | Log. Skip. Do not block. |
 | 14 REPORT | Report write fails | Print report to stdout. Log error. Do not block. (Notion is on-demand `/share`, not in-pipeline — no failure mode here.) |
@@ -565,6 +628,10 @@ The skill is opportunistic — it runs after state is already safe on disk. Bran
 - ALWAYS log force-bypass usage. Every `--force` invocation is reviewed by skill-curator weekly.
 - ALWAYS emit a Step 14b run record, on success and on halt alike. Logging only successful runs biases every metric upward.
 - NEVER fabricate a run-record field to avoid an `unknown`. An honest gap is data; a guess is corruption.
+- NEVER let a pre-existing survey finding block a ship. It is queued, not a gate. A slice does not inherit the debt of the files it touched.
+- NEVER auto-promote a survey finding to the board unless it clears every condition in the survey skill's promotion bar, and never past `survey.max_promote_per_cycle`.
+- NEVER let the cadence survey delay the commit, the report, or Brandon. Detached, or not at all.
+- NEVER let a judge concern reach REVISE or Brandon without Step 8's VET pass re-opening its cited location.
 - NEVER let the run recorder block, delay, or alter a ship. It is instrumentation, not a gate.
 - NEVER run a `/assay <spec-id>` when the spec status is `draft`. Force Brandon through `/spec approve` first.
 - NEVER overwrite a spec's `shipped-at` or `shipped-commit` fields once set. Re-shipping with `--force` requires a new spec.
@@ -613,5 +680,7 @@ Enhanced by (in order of impact):
 /assay "<task>" --dry-run                # Run through done-gate, show diff + verdict, halt before commit. Resume to commit.
 /assay "<task>" --no-tdd                 # Skip the red-green loop and Check 9. Logged to the run record.
 /assay "<task>" --no-spec                # Skip the Step 1 escalation to /spec on a fuzzy MEDIUM+ task. Logged.
+/assay "<task>" --no-survey              # Skip the Step 8.5 branch survey and the Step 12.5 cadence survey.
+/assay "<task>" --survey                 # Force the branch survey even at TRIVIAL or with in_pipeline off.
 /assay resume                            # Resume last interrupted session (or finish a dry-run).
 /assay-stats                             # Read the run log back: stage fire rates, judge acceptance, approval.

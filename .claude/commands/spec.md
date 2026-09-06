@@ -110,8 +110,31 @@ Rule of thumb: if the task description is under 8 words AND has no measurable ou
   -> Flips status. Now /assay add-sharpe-engine-2026-05-17 will run.
 ```
 
+## Standing findings as grill evidence
+
+Before the first question, load any pending findings from `/survey` that touch
+the subsystem this goal names — `$HOME/.claude/memory/projects/<ns>/findings/`,
+`status: pending`. They are evidence the grill would otherwise have to ask for:
+a finding already carries `file:line`, a concrete impact, an effort estimate,
+and often a seam.
+
+Use them two ways. As **grounding** — a recommended answer backed by a finding
+beats one backed by inference, and say which finding it came from. And as
+**contradiction** — a goal that a pending finding says is already broken, or
+already half-built, is a goal worth pushing on before writing anything.
+
+When the spec ships, mark the findings it consumed `status: spec` with the
+spec-id, so the queue stops surfacing work that is now in the pipeline.
+
+Invoking `/spec <finding-id>` directly seeds the Problem section from that
+finding's evidence and starts the grill from there. That is the intended path
+for a MEDIUM+ or fuzzy finding — the survey never promotes those to tickets,
+because finding the seam is the grill's job.
+
 ## Coordination
 
+- `/survey` produces the findings this grill reads as evidence, and routes its
+  fuzzy or seam-less findings here rather than to the board.
 - `/assay <spec-id>` consumes approved specs. Step 1 PARSE resolves spec-id, Step 11 COMMIT flips status to `shipped`.
 - `judge-panel` reads the spec's `risk-tier` field to determine which judges to invoke.
 - `done-gate` reads the spec's Success criteria section for Check 1.

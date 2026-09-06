@@ -72,6 +72,7 @@ Never hardcode either. Resolve at every invocation — the operator may switch.
 /to-tickets add "<title>"          # one-off ticket, no spec
 /to-tickets block <id> --by=<id>   # add an edge
 /to-tickets status <id> <status>   # todo|in-progress|needs-qa|done|blocked
+/to-tickets reconcile              # verify, refresh, unblock, retire the board
 ```
 
 ## Ticket format
@@ -82,6 +83,7 @@ One file per ticket: `<ticket-dir>/<ticket-id>.md`.
 ---
 ticket-id: parallelize-walkforward-2026-05-17-03
 spec: parallelize-walkforward-2026-05-17
+finding: perf-2026-05-16-02          # only when a survey finding produced it
 title: Walk-forward runs on a worker pool for a single fold
 status: todo
 kind: slice | groundwork | qa | bug
@@ -89,6 +91,7 @@ tier: MEDIUM
 blocked_by: [parallelize-walkforward-2026-05-17-01]
 seam: run_walkforward() — engine/tests/test_walkforward.py
 branch: slice/walkforward-pool
+planned_at: a1b2c3d                  # short SHA this ticket was written against
 created: 2026-05-17
 ---
 
@@ -108,6 +111,70 @@ Crosses: config → pool executor → `run_walkforward()` → CLI output.
 
 - <What a reader would reasonably assume is included and is not>
 ```
+
+### Executor context (MEDIUM+ and every `--parallel` ticket)
+
+The sections above are enough for a ticket Brandon runs himself in a session
+that already has the repo loaded. They are **not** enough for a subagent in a
+fresh worktree, which is what `/implement --parallel` dispatches: it has no
+session context, sees only committed files, and has no way to ask a question.
+That executor is the weakest plausible reader of this file, and a ticket that
+assumes context it does not have produces a diff that misses.
+
+So add these four sections whenever the tier is MEDIUM or above, **or** the
+ticket may be run under `--parallel` at any tier:
+
+```markdown
+## Current state
+
+- `engine/walkforward.py` — the sequential loop, lines 40–72.
+
+<A short excerpt of the code as it exists today, with `file:line` markers, so
+the executor can confirm it is looking at the right thing.>
+
+Conventions this must match: <the pattern, plus one exemplar file to copy —
+"error handling follows the Result pattern, see `engine/result.py` and its use
+in `engine/scoring.py:40-60`">.
+
+Vocabulary: <the glossary terms from `glossary.path` this work must use in
+names and comments, quoted — the executor has not read that file>.
+
+## Commands
+
+| Purpose | Command | Expected |
+|---|---|---|
+| Tests | `uv run pytest engine/tests/test_walkforward.py` | exit 0 |
+| Lint | `uv run ruff check .` | exit 0 |
+| Types | `uv run mypy` | exit 0 |
+
+(Read from the repo during slicing, never guessed. A guessed command produces
+a ticket that fails its own acceptance.)
+
+## Drift check
+
+`git diff --stat <planned_at>..HEAD -- <in-scope paths>`
+
+If any in-scope file changed since `planned_at`, compare the Current state
+excerpt against the live code before starting. A mismatch is a STOP condition.
+
+## STOP conditions
+
+Stop and report rather than improvising if:
+
+- The code does not match the Current state excerpt.
+- A verification fails twice after one reasonable fix attempt.
+- The work appears to require touching something in Out of scope.
+- <the specific assumption this slice rests on> turns out to be false.
+```
+
+STOP conditions must be specific to this slice's actual risks. Boilerplate
+copied between tickets is not a STOP condition; it is decoration, and an
+executor learns to ignore it.
+
+The tier gate is a cost decision. A LOW ticket does not need a novel, and
+writing one taxes every slice to protect the few that need it. But `--parallel`
+overrides the tier: zero-context execution is the condition that makes the
+extra sections load-bearing, not the size of the change.
 
 Ticket ids are `<spec-id>-NN`, two-digit, assigned in dependency order so the
 numbering itself hints at sequence. One-off tickets (`add`) use
@@ -201,6 +268,45 @@ A ticket is **unblocked** when every id in `blocked_by` has status `done`.
 `needs-qa` is not `done` — a slice awaiting hands-on review does not unblock
 work built on top of it. That is the whole point of the QA queue.
 
+## Reconcile
+
+A board with no reconcile pass rots. Tickets written three weeks ago describe
+code that has moved; `blocked` tickets sit behind obstacles nobody revisited;
+`todo` tickets describe findings that got fixed in passing by an unrelated
+slice. None of that is visible from the board itself — every row still looks
+live — so the board quietly becomes a to-do list nobody trusts, and the DAG
+that `/implement` walks stops meaning anything.
+
+`reconcile` processes what happened since the last pass. Read every ticket
+file, then by status:
+
+- **`done`** — spot-check the cheap acceptance criteria against current HEAD.
+  Mark verified. Never delete the file; it is the record of what shipped.
+- **`needs-qa`** — check whether `/qa` has run. Stale beyond a week, flag it:
+  a slice nobody has laid hands on is blocking everything built on top of it,
+  and that is the QA queue working as designed only if someone eventually
+  arrives.
+- **`in-progress`** — almost always a crashed batch. Check whether the branch
+  exists and what is on it, then flag to Brandon. Never silently reset it.
+- **`blocked`** — read the reason and investigate the obstacle in the code.
+  Either re-slice around it (a new ticket id when the approach changed
+  fundamentally, an in-place rewrite when it did not) or retire it to the
+  rejection ledger with one line of rationale.
+- **`todo`** — run the drift check against `planned_at`. If in-scope files
+  moved, **re-verify the work is still needed** before refreshing anything: a
+  finding fixed in passing is retired to the rejection ledger, not rewritten.
+  If it is still needed, refresh the Current state excerpt and stamp a new
+  `planned_at`.
+
+A ticket carrying a `finding` id closes the loop back to `survey`: when it
+lands, mark the finding `promoted` and done; when it is retired, write the
+finding to `rejected.md` with the reason, so the next cadence survey does not
+re-derive it.
+
+Finish with a short report — what verified, what refreshed, what retired, and
+what is executable right now. Then stop. Reconcile changes ticket files and the
+ledger; it never changes code and never commits.
+
 ## Integration
 
 - **`/spec`** — an approved spec is this skill's input. Testing seams are
@@ -214,6 +320,9 @@ work built on top of it. That is the whole point of the QA queue.
   spec's remaining tickets when they invalidate an assumption, and stand alone
   when they are polish. Ask which; do not assume.
 - **`/architecture`** — extraction proposals become `kind: groundwork` tickets.
+- **`/survey`** — vetted findings become `kind: bug` or `kind: groundwork`
+  tickets carrying a `finding` id and the survey's verified commands. A
+  finding with no seam never arrives here; it goes to `/spec` instead.
 
 ## Hard constraints
 
@@ -224,3 +333,12 @@ work built on top of it. That is the whole point of the QA queue.
 - NEVER mark a ticket `done` from this skill. Only `/assay`'s commit step
   does that, and only after a real commit exists.
 - NEVER write outside the configured backend path.
+- NEVER write a MEDIUM+ or `--parallel`-eligible ticket without Current state,
+  Commands, a drift check, and STOP conditions. A zero-context executor cannot
+  ask, and improvises instead.
+- NEVER copy an excerpt from a survey finding or a subagent report without
+  opening the file. Cited line numbers are leads; a wrong excerpt becomes a
+  ticket that fails its own drift check.
+- NEVER guess a verification command. Read it from the repo or leave the ticket
+  unwritten.
+- NEVER let `reconcile` edit code, commit, or reset a stuck ticket silently.

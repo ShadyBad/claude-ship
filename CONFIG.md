@@ -21,7 +21,9 @@ Shipped defaults:
   "tickets":  { "backend": "repo-files", "path": "docs/tickets" },
   "glossary": { "path": "CONTEXT.md", "adr_path": "docs/adr" },
   "tdd":      { "min_tier": "MEDIUM" },
-  "qa":       { "queue": true }
+  "qa":       { "queue": true },
+  "survey":   { "auto": "queue", "cadence_days": 7,
+                "in_pipeline": true, "max_promote_per_cycle": 3 }
 }
 ```
 
@@ -33,6 +35,23 @@ Shipped defaults:
 | `glossary.adr_path` | any relative path | Where `/context` writes architecture decision records. |
 | `tdd.min_tier` | a risk tier, or `NEVER` | Lowest tier at which the red-green loop is mandatory and done-gate Check 9 fires. `NEVER` disables enforcement. |
 | `qa.queue` | `true` / `false` | With `true`, a shipped ticket lands in `needs-qa` for hands-on review instead of closing. |
+| `survey.auto` | `off`, `queue` (default), `promote` | How far the automatic repo survey is allowed to go. `off` — never fires on its own. `queue` — findings are written and surfaced in the SessionStart banner and statusline; nothing reaches the board without your pick. `promote` — findings clearing the promotion bar become `kind: bug` tickets directly, and `/implement` may then work them unattended to a queued diff. |
+| `survey.cadence_days` | positive integer | Days between post-ship cadence surveys. Compared against `last-survey-run.txt` at `/assay` Step 12.5. |
+| `survey.in_pipeline` | `true` / `false` | Whether the branch-scoped survey runs inside `/assay` at Step 8.5, alongside the judges. |
+| `survey.max_promote_per_cycle` | non-negative integer | Ceiling on auto-promoted tickets per cycle, so one bad audit cannot flood the board. Only meaningful when `survey.auto` is `promote`. |
+
+### On `survey.auto`
+
+It ships as `queue` on purpose. Auto-promotion is the difference between the
+machine finding work and the machine choosing work, and the promotion bar
+(correctness or security, HIGH confidence, S effort, a named seam, LOW/MEDIUM
+tier, nothing under `auth/`, `payments/`, or `migrations/`) is only trustworthy
+once you have evidence it holds in your repos.
+
+Flip it to `promote` after `/assay-stats` shows a real vet-survival rate and a
+real action rate in the survey funnel. Flipping first fills the board with
+machine-generated noise, and a board you have stopped trusting is not
+recoverable by improving the audit afterwards.
 
 Missing file, missing key, and malformed JSON all fall back to the shipped defaults — per key, not all-or-nothing. A fresh install works with no config at all.
 

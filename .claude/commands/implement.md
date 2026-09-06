@@ -1,7 +1,7 @@
 ---
 name: implement
-description: Batch executor for the ticket board. Walks the DAG, picks unblocked tickets, and runs a full /assay on each with the TDD loop and judge panel — then stops at done-gate and queues the finished diff for Brandon rather than committing it. Gets the throughput of an unattended night shift without handing over commit authority, which the completion contract reserves for a human. Use when the board has unblocked tickets and Brandon wants several slices worked through in one sitting, or when he says "work the board", "keep going", or "do the next few tickets".
-argument-hint: [<ticket-id>] [--count=<n>] [--all-unblocked] [--parallel] [--dry-run] [--stop-on-fail]
+description: Batch executor for the ticket board. Walks the DAG, picks unblocked tickets, and runs a full /assay on each with the TDD loop and judge panel — then stops at done-gate and queues the finished diff for Brandon rather than committing it. Gets the throughput of an unattended night shift without handing over commit authority, which the completion contract reserves for a human. Use when the board has unblocked tickets and Brandon wants several slices worked through in one sitting, or when he says "work the board", "keep going", or "do the next few tickets". On an empty board it runs /survey rather than idling, so a dry board becomes findings instead of a dead end.
+argument-hint: [<ticket-id>] [--count=<n>] [--all-unblocked] [--parallel] [--dry-run] [--stop-on-fail] [--no-survey]
 ---
 
 # /implement — Work the Board
@@ -22,6 +22,7 @@ Reads the ticket DAG, runs `/assay` on unblocked tickets back to back, and parks
 /implement --parallel           # independent tickets on separate branches
 /implement --dry-run            # show the pick order and stop
 /implement --stop-on-fail       # halt the batch on the first failure
+/implement --no-survey          # on an empty board, report and stop; do not survey
 ```
 
 ## The bargain
@@ -79,6 +80,25 @@ A ticket unblocks only when every id in its `blocked_by` is `done`. A queued-but
 
 That also caps a batch at the DAG's current parallel width. If `--count=5` and only two tickets are unblocked, you get two and are told why.
 
+## Empty board
+
+If nothing is unblocked and nothing is `todo`, do not report "nothing to do."
+An idle board is not a finished project — it is a project waiting for someone
+to have an idea, and that someone is currently you.
+
+Instead, run `/survey` (repo scope, standard effort, honoring `survey.auto`)
+and come back with what is worth doing. Findings that clear the auto-promotion
+bar land on the board as `kind: bug` tickets and the batch continues into them;
+everything else queues for a pick.
+
+Two things this never does. It does not survey when the board has unblocked
+work — the board is the plan, and second-guessing it mid-batch is how a batch
+loses its shape. And it does not execute a queued finding: the auto-promotion
+bar in the `survey` skill is the line between the machine finding work and the
+machine choosing work, and `/implement` sits on the far side of it.
+
+If `survey.auto` is `off`, report the empty board plainly and stop.
+
 ## Parallel mode
 
 `--parallel` runs independent tickets as concurrent subagents on separate branches, one worktree each. Only tickets with no path between them in the DAG are eligible. Bounded by the risk tier's max-subagent ceiling from `/assay` Step 4.
@@ -99,3 +119,5 @@ Nothing is left half-done: a halted ticket's branch is preserved with its work i
 - Never picks a blocked ticket, even when named explicitly. It tells you what is blocking it.
 - Never works two tickets on one branch.
 - Never marks a ticket `done`. That happens at commit time, and only then.
+- Never executes a finding that has not become a ticket through the survey's
+  promotion bar. Queued findings wait for you.

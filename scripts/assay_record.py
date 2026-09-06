@@ -54,11 +54,25 @@ STAGES = {
     "mcp-route": 6,
     "tdd-loop": 7,
     "judge-panel": 8,
+    "judge-vet": 8,
+    "survey-branch": 8,
     "revise": 9,
     "done-gate": 10,
     "commit-protocol": 11,
     "learn": 12,
+    "survey-cadence": 13,
 }
+
+# The survey funnel. Each stage is a subset of the one before it, which is what
+# makes the numbers falsifiable: vetting can only remove findings, and only a
+# vetted finding can be promoted or queued.
+SURVEY_COUNTS = (
+    "findings_raw",
+    "findings_after_vet",
+    "findings_promoted",
+    "findings_queued",
+    "findings_rejected",
+)
 
 
 class ValidationError(ValueError):
@@ -88,7 +102,12 @@ def _validate_judge(idx: int, judge: Any) -> None:
 
     concerns = judge.get("concerns", 0)
     accepted = judge.get("accepted", 0)
-    for key, val in (("concerns", concerns), ("accepted", accepted)):
+    # Concerns the vet pass dropped before they reached Brandon or the revise
+    # loop: false positives, mis-attributed evidence, cross-judge duplicates.
+    # `concerns` is the post-vet count, so a judge's real noise level is
+    # dropped / (dropped + concerns) — the evidence for cutting it.
+    dropped = judge.get("dropped", 0)
+    for key, val in (("concerns", concerns), ("accepted", accepted), ("dropped", dropped)):
         _require(
             isinstance(val, int) and not isinstance(val, bool) and val >= 0,
             f"{label}.{key} must be a non-negative integer",
@@ -99,6 +118,52 @@ def _validate_judge(idx: int, judge: Any) -> None:
         accepted <= concerns,
         f"{label}.accepted ({accepted}) exceeds .concerns ({concerns})",
     )
+
+
+def _validate_survey(survey: Any) -> None:
+    """The funnel must narrow. A widening one is a miscount, not a discovery."""
+    _require(isinstance(survey, dict), "survey must be an object")
+    counts: dict[str, int] = {}
+    for key in SURVEY_COUNTS:
+        if key not in survey:
+            continue
+        val = survey[key]
+        _require(
+            isinstance(val, int) and not isinstance(val, bool) and val >= 0,
+            f"survey.{key} must be a non-negative integer",
+        )
+        counts[key] = val
+
+    raw = counts.get("findings_raw")
+    vetted = counts.get("findings_after_vet")
+    if raw is not None and vetted is not None:
+        _require(
+            vetted <= raw,
+            f"survey.findings_after_vet ({vetted}) exceeds .findings_raw ({raw}) — "
+            "vetting removes findings, it cannot add them",
+        )
+    if vetted is not None:
+        for key in ("findings_promoted", "findings_queued"):
+            val = counts.get(key)
+            if val is not None:
+                _require(
+                    val <= vetted,
+                    f"survey.{key} ({val}) exceeds .findings_after_vet ({vetted})",
+                )
+        promoted = counts.get("findings_promoted", 0)
+        queued = counts.get("findings_queued", 0)
+        _require(
+            promoted + queued <= vetted,
+            f"survey.findings_promoted + .findings_queued ({promoted + queued}) "
+            f"exceeds .findings_after_vet ({vetted})",
+        )
+
+    scope = survey.get("scope")
+    if scope is not None:
+        _require(
+            scope in {"branch", "hotspots", "repo", "focus"},
+            "survey.scope must be one of ['branch', 'focus', 'hotspots', 'repo']",
+        )
 
 
 def validate(record: dict[str, Any]) -> dict[str, Any]:
@@ -152,6 +217,9 @@ def validate(record: dict[str, Any]) -> dict[str, Any]:
     for idx, judge in enumerate(judges):
         _validate_judge(idx, judge)
     rec["judges"] = judges
+
+    if "survey" in rec and rec["survey"] is not None:
+        _validate_survey(rec["survey"])
 
     for label in ("diff_before_review", "diff_after_review"):
         if label in rec and rec[label] is not None:

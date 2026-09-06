@@ -46,10 +46,14 @@ MIN_N_STAGE = 5
 MIN_N_EDIT = 5
 MIN_N_JUDGE = 10
 MIN_N_APPROVAL = 5
+MIN_N_SURVEY = 3
 
 KILL_STAGE_FIRE = 0.70
 KILL_EDIT_RATE = 0.20
 KILL_JUDGE_ACCEPT = 0.15
+# Below this, the audit is manufacturing more noise than the vet pass can be
+# expected to keep filtering — narrow the categories or raise the effort dial.
+KILL_VET_SURVIVAL = 0.15
 
 
 def load(log_path: Path, since: str | None = None) -> tuple[list[dict[str, Any]], list[str]]:
@@ -124,6 +128,7 @@ def judge_acceptance(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
     """Per judge: concerns acted on / concerns raised, plus block counts."""
     raised: dict[str, int] = defaultdict(int)
     accepted: dict[str, int] = defaultdict(int)
+    dropped: dict[str, int] = defaultdict(int)
     invocations: dict[str, int] = defaultdict(int)
     blocks: dict[str, int] = defaultdict(int)
 
@@ -135,6 +140,7 @@ def judge_acceptance(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
             invocations[name] += 1
             raised[name] += int(judge.get("concerns", 0) or 0)
             accepted[name] += int(judge.get("accepted", 0) or 0)
+            dropped[name] += int(judge.get("dropped", 0) or 0)
             if judge.get("verdict") == "block":
                 blocks[name] += 1
 
@@ -142,17 +148,73 @@ def judge_acceptance(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
     for name in sorted(invocations, key=lambda j: (-raised[j], j)):
         n = raised[name]
         rate = accepted[name] / n if n else 0.0
+        surfaced = n + dropped[name]
         out[name] = {
             "invocations": invocations[name],
             "concerns": n,
             "accepted": accepted[name],
+            "dropped": dropped[name],
             "blocks": blocks[name],
             "rate": rate,
+            # Share of everything this judge raised that the vet pass threw out
+            # before Brandon saw it. A judge with a high drop rate is not
+            # reviewing, it is generating work for the vetter.
+            "drop_rate": (dropped[name] / surfaced) if surfaced else 0.0,
             "verdict": _verdict(
                 n, MIN_N_JUDGE, rate, KILL_JUDGE_ACCEPT, "noise — consider cutting"
             ),
         }
     return out
+
+
+def survey_funnel(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate the survey funnel: raw findings -> vetted -> promoted/queued.
+
+    This is the calibration the audit cannot get any other way. A high raw
+    count with a low survival rate means the subagents are guessing; a healthy
+    survival rate with nothing ever promoted or queued means the findings are
+    real but not worth doing, which is a reason to narrow the categories.
+    """
+    totals: dict[str, int] = defaultdict(int)
+    surveys = 0
+    scopes: dict[str, int] = defaultdict(int)
+    for rec in records:
+        survey = rec.get("survey")
+        if not isinstance(survey, dict):
+            continue
+        surveys += 1
+        scope = survey.get("scope")
+        if scope:
+            scopes[str(scope)] += 1
+        for key in (
+            "findings_raw",
+            "findings_after_vet",
+            "findings_promoted",
+            "findings_queued",
+            "findings_rejected",
+        ):
+            val = survey.get(key)
+            if isinstance(val, int) and not isinstance(val, bool):
+                totals[key] += val
+
+    raw = totals["findings_raw"]
+    vetted = totals["findings_after_vet"]
+    survival = vetted / raw if raw else 0.0
+    acted = totals["findings_promoted"] + totals["findings_queued"]
+    return {
+        "surveys": surveys,
+        "scopes": dict(sorted(scopes.items())),
+        "findings_raw": raw,
+        "findings_after_vet": vetted,
+        "findings_promoted": totals["findings_promoted"],
+        "findings_queued": totals["findings_queued"],
+        "findings_rejected": totals["findings_rejected"],
+        "vet_survival_rate": survival,
+        "action_rate": (acted / vetted) if vetted else 0.0,
+        "verdict": _verdict(
+            surveys, MIN_N_SURVEY, survival, KILL_VET_SURVIVAL, "audit is mostly noise"
+        ),
+    }
 
 
 def approval(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -197,6 +259,7 @@ def build_report(records: list[dict[str, Any]]) -> dict[str, Any]:
         "stage_fire_rates": stage_fire_rates(records),
         "edit_after_review": edit_after_review(records),
         "judge_acceptance": judge_acceptance(records),
+        "survey_funnel": survey_funnel(records),
         "approval": approval(records),
     }
 
@@ -237,7 +300,7 @@ def render(report: dict[str, Any], warnings: list[str]) -> str:
     add(f"  verdict: {ear['verdict']}")
 
     add("")
-    add("JUDGE ACCEPTANCE      acc/raised   rate    blocks  verdict")
+    add("JUDGE ACCEPTANCE      acc/raised   rate   dropped  verdict")
     add("-" * 62)
     ja = report["judge_acceptance"]
     if not ja:
@@ -245,8 +308,24 @@ def render(report: dict[str, Any], warnings: list[str]) -> str:
     for name, j in ja.items():
         add(
             f"  {name:<20} {j['accepted']:>3}/{j['concerns']:<4} {_pct(j['rate'])} "
-            f"{j['blocks']:>5}   {j['verdict']}"
+            f"{j['dropped']:>5} ({_pct(j['drop_rate']).strip()})  {j['verdict']}"
         )
+
+    add("")
+    add("SURVEY FUNNEL")
+    add("-" * 62)
+    sf = report["survey_funnel"]
+    if not sf["surveys"]:
+        add("  (no surveys recorded yet)")
+    else:
+        add(f"  surveys: {sf['surveys']}  scopes: {sf['scopes']}")
+        add(
+            f"  raw {sf['findings_raw']} -> vetted {sf['findings_after_vet']} "
+            f"({_pct(sf['vet_survival_rate']).strip()} survive) -> "
+            f"promoted {sf['findings_promoted']} + queued {sf['findings_queued']}"
+        )
+        add(f"  action rate on vetted findings: {_pct(sf['action_rate']).strip()}")
+        add(f"  verdict: {sf['verdict']}")
 
     add("")
     add("APPROVAL")

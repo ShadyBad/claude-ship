@@ -193,9 +193,62 @@ Each judge call must:
 
 When invoking multiple judges, parallelize the calls. Use Claude Code's subagent dispatch (via `superpowers` plugin's subagent-driven-development) to run them concurrently.
 
+## Vet Pass (mandatory, between dispatch and aggregation)
+
+Pipeline stage **VET**, recorded as `judge-vet` in the run record. It sits
+inside Step 8 between judge dispatch and aggregation, and it is eligible on
+every run where the panel fires.
+
+**Judges over-report.** Twenty-nine fresh-context reviewers, each incentivized
+to find something, produce concerns faster than they produce signal. This
+skill's own output contract already admits it: the run record enforces
+`accepted <= concerns` per judge *because* raised and acted-on are different
+numbers. Without a vetting step, that gap is measuring noise, and the revise
+loop spends Brandon's attention on it.
+
+So before any concern reaches aggregation, Brandon, or the revise loop, the
+lead re-opens every cited location in the diff and confirms it. Three failure
+classes, all common:
+
+- **By-design reported as defect.** The concern describes deliberate behavior
+   — a convention, a tradeoff recorded in an ADR under `glossary.adr_path`, a
+   choice pinned in the spec's Implementation choices, or an entry already in
+   `rejected.md`. Drop it. The exception is drift: if the code no longer
+   matches what the ADR says, the drift is a real finding and outranks the
+   original concern.
+- **Mis-attributed evidence.** A real concern pinned to the wrong file, the
+   wrong line, or a line the diff did not touch. Correct it, or drop it if the
+   cited code does not exist. Never pass a citation through unopened — a judge
+   reviewing a diff in fresh context cites what it inferred, and inference is a
+   lead, not a fact.
+- **Cross-judge duplicates.** The same concern from three judges is one
+   concern with three votes, not three concerns. Merge, keep the strongest
+   evidence, and record the vote count — it is what promotes a concern to
+   `must_address_before_ship` under Aggregation rule 2.
+
+The vet pass runs on the lead, not a subagent. It is a re-read of code already
+in context, and handing it to a fresh agent would reintroduce the same
+inference problem it exists to catch.
+
+**Record the drops.** Each judge's entry in the run record carries `dropped`
+alongside `concerns` and `accepted`. `concerns` is the post-vet count, so a
+judge's real noise level is `dropped / (dropped + concerns)`. A judge whose
+drop rate stays high is not reviewing — it is generating work for the vetter,
+and `/assay-stats` will say so with a sample size behind it.
+
+**Cost.** The vet pass adds a serial re-read to every run where judges fire.
+That is real, and it is only worth paying if the false-positive rate is
+material. It is instrumented precisely so that question gets answered with data
+rather than defended with argument.
+
+Skip conditions: none at HIGH/CRITICAL. At LOW/MEDIUM the pass may be limited
+to concerns carrying a `file:line` citation — a concern with no citation cannot
+be vetted, and goes to `log_for_later` rather than `must_address_before_ship`.
+
 ## Aggregation Rules
 
-After all judges respond, aggregate:
+After the vet pass, aggregate what survived it. Every count below is a
+post-vet count:
 
 1. If any judge returns `verdict: "block"` → aggregate verdict is `block`. Surface all blocking concerns.
 2. If 2+ judges return the same `concern` (semantic match, not exact string) → promote to `must_address_before_ship`.
@@ -296,4 +349,12 @@ After 3 such dismissals of the same combination, the `operator-model` skill shou
 - NEVER return `ship` on a standards-clean diff that misses the spec. The spec axis is not optional.
 - NEVER skip the Security Reviewer for changes touching auth, secrets, user data, or financial calculation, regardless of tier or override.
 - NEVER skip Karpathy (judge 17) on HIGH or CRITICAL — overengineering check is non-negotiable.
+- NEVER let a concern reach Brandon, the revise loop, or the aggregate verdict
+  without the vet pass re-opening its cited location. An unvetted concern is a
+  claim, not a finding.
+- NEVER vet a concern by asking another agent. The lead re-reads the code
+  itself; delegating the check reintroduces the inference it exists to catch.
+- NEVER drop a concern silently. Every drop is counted into the judge's
+  `dropped` field, because a judge that is mostly noise can only be cut with
+  evidence.
 - ALWAYS produce a verdict, even if some judges time out. Note timeouts in the output.

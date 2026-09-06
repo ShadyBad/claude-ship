@@ -1,7 +1,7 @@
 {
   "name": "assay",
-  "description": "/assay \u2014 a 14-step ship pipeline orchestrator for Claude Code. Wires together a spec builder, judge panel, risk-tier classifier, MCP router, done-gate, commit protocol, postmortem, and project + session memory into a single command. Includes /spec, /context, /to-tickets, /implement, /qa, /architecture, /postmortem, /morning, /eod, /weekly, /cross-learn commands and 17 supporting skills. Use to take a fuzzy goal \u2192 crisp spec \u2192 risk-classified plan \u2192 reviewed diff \u2192 engineer-in-the-loop commit \u2192 captured lessons. Patterns adapted from Anthropic's multi-agent research system (effort budgets, structured delegation briefs, artifact refs, long-horizon hand-off).",
-  "version": "0.1.1",
+  "description": "/assay \u2014 a 14-step ship pipeline orchestrator for Claude Code. Wires together a spec builder, judge panel, risk-tier classifier, MCP router, done-gate, commit protocol, postmortem, and project + session memory into a single command. Includes /survey, /spec, /context, /to-tickets, /implement, /qa, /architecture, /postmortem, /morning, /eod, /weekly, /cross-learn commands and 18 supporting skills. Use to take a fuzzy goal \u2192 crisp spec \u2192 risk-classified plan \u2192 reviewed diff \u2192 engineer-in-the-loop commit \u2192 captured lessons. Patterns adapted from Anthropic's multi-agent research system (effort budgets, structured delegation briefs, artifact refs, long-horizon hand-off).",
+  "version": "0.2.0",
   "author": {
     "name": "Brandon Shay",
     "url": "https://github.com/shadybad"
@@ -18,6 +18,8 @@
     "judge-panel",
     "risk-tier",
     "postmortem",
+    "audit",
+    "survey",
     "memory",
     "multi-agent"
   ],

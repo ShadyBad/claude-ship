@@ -89,6 +89,60 @@ When `lessons.md` exceeds 500 entries:
 
 This runs at the end of `/assay` when entry count is checked, not on every read.
 
+## The Rejection Ledger (`rejected.md`)
+
+A lesson records what was learned. The ledger records **what was considered and
+declined** — and without it, every recurring pass re-derives the same rejected
+conclusion forever.
+
+Two producers, one failure mode. The `survey` skill audits on a cadence: with no
+ledger, a finding Brandon dismissed on Monday comes back next Monday, and the
+Monday after, until he stops reading the queue. The `judge-panel` vet pass drops
+by-design concerns: with no ledger, the same by-design call is re-litigated on
+every diff that touches the same code.
+
+```
+$HOME/.claude/memory/projects/<ns>/rejected.md
+```
+
+One entry per line, pipe-delimited, same discipline as `lessons.md`:
+
+```
+<ISO-timestamp> | <source> | <finding or concern, one line> | <why it was declined> | <evidence ref>
+```
+
+- `source` is `survey`, `judge-vet`, `qa`, or `brandon`.
+- The reason is mandatory and must be a reason, not a verdict. "Not worth
+  doing" is not a reason; "standard proxy convention, every CLI honors it" is.
+- `evidence ref` is the `file:line` the rejected claim pointed at, so a future
+  pass can tell whether the code has changed underneath the rejection.
+
+### Read rules
+
+- `survey` recon reads the whole ledger before the audit and passes it into
+  every subagent's delegation brief as decided tradeoffs. A finding matching a
+  ledger entry is dropped during vetting, not reported.
+- `judge-panel`'s vet pass reads it before classifying a concern as by-design.
+- Both are additive to normal lesson loading, and the ledger is not counted
+  against the 70-entry read cap — it is short by construction.
+
+### Write rules
+
+Append when a finding or concern is explicitly declined: Brandon rejects one
+from the survey queue, the vet pass drops one as by-design, or he waves off a
+judge concern at the gate. Never append a concern that was merely deprioritized
+— deferred is not declined, and conflating them makes the ledger a place
+findings go to disappear.
+
+### Re-opening
+
+A ledger entry is a decision, not a life sentence. A later pass may re-report a
+rejected finding **only with new evidence**, and must say what changed — the
+code moved, the reason no longer holds, the ADR it relied on went stale. Append
+a new entry recording the reversal; never edit or delete the original. The
+ledger is append-only for the same reason `lessons.md` is: the history of what
+was declined and why is the thing being preserved.
+
 ## Cross-Project Lessons
 
 A lesson can be relevant to multiple projects. If a lesson is tagged with `cross-project`, also append (with same content) to the `personal` project's lessons.md as the canonical cross-project home. Reference from project-specific files using `[cross-ref: personal/<timestamp>]` rather than duplicating.
@@ -124,7 +178,13 @@ Enhanced by: `claude-md-management` (for session-learning capture), `episodic-me
 
 ## Hard Constraints
 
-- NEVER delete an entry. Archives compress, they do not destroy.
+- NEVER delete an entry, in `lessons.md` or in `rejected.md`. Archives
+  compress, they do not destroy.
+- NEVER write a rejection without a reason. An entry reading "not worth doing"
+  is unusable to the pass that reads it next, and the finding will simply come
+  back.
+- NEVER treat a deferred finding as a rejected one. Deferred work waits;
+  rejected work is decided.
 - NEVER write a lesson without a tag. Untagged lessons are unsearchable and degrade the system.
 - NEVER write a lesson longer than 3 sentences. If it needs more, it is two lessons.
 - NEVER load more than 70 entries at task start. Token budget matters.

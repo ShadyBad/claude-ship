@@ -53,11 +53,30 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         # After commit, park the ticket in needs-qa instead of closing it.
         "queue": True,
     },
+    "survey": {
+        # off      — the survey stage never fires on its own.
+        # queue    — findings are written to the queue and surfaced; nothing
+        #            reaches the board without a human pick.
+        # promote  — findings that clear the auto-promotion bar become tickets
+        #            directly. Only turn this on once /assay-stats shows the
+        #            survey's precision is real; a board full of machine noise
+        #            is a board nobody trusts again.
+        "auto": "queue",
+        # Days between cadence surveys. The post-ship check compares this
+        # against last-survey-run.txt.
+        "cadence_days": 7,
+        # Run the branch-scoped survey inside /assay at Step 8.5.
+        "in_pipeline": True,
+        # Ceiling on auto-promoted tickets per cadence cycle, so one bad audit
+        # cannot flood the board.
+        "max_promote_per_cycle": 3,
+    },
 }
 
 TICKET_BACKENDS = {"repo-files", "memory-dir"}
 TIER_ORDER = ["TRIVIAL", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
 TDD_TIERS = {*TIER_ORDER, "NEVER"}
+SURVEY_AUTO = {"off", "queue", "promote"}
 
 
 def load_raw(path: Path = DEFAULT_PATH) -> dict[str, Any]:
@@ -108,6 +127,16 @@ def tdd_required(tier: str, path: Path = DEFAULT_PATH) -> bool:
     return TIER_ORDER.index(tier.upper()) >= TIER_ORDER.index(floor)
 
 
+def survey_promotes(path: Path = DEFAULT_PATH) -> bool:
+    """Whether a surveyed finding may become a ticket without a human pick."""
+    return str(get("survey.auto", path)).lower() == "promote"
+
+
+def survey_enabled(path: Path = DEFAULT_PATH) -> bool:
+    """Whether the survey stage fires at all."""
+    return str(get("survey.auto", path)).lower() in {"queue", "promote"}
+
+
 def validate(path: Path = DEFAULT_PATH) -> list[str]:
     """Return human-readable problems with the config file. Empty means fine."""
     problems: list[str] = []
@@ -140,6 +169,18 @@ def validate(path: Path = DEFAULT_PATH) -> list[str]:
         problems.append(f"tdd.min_tier {tier!r} is not one of {sorted(TDD_TIERS)}")
     if not isinstance(cfg["qa"]["queue"], bool):
         problems.append("qa.queue must be true or false")
+
+    auto = str(cfg["survey"]["auto"]).lower()
+    if auto not in SURVEY_AUTO:
+        problems.append(f"survey.auto {auto!r} is not one of {sorted(SURVEY_AUTO)}")
+    cadence = cfg["survey"]["cadence_days"]
+    if not isinstance(cadence, int) or isinstance(cadence, bool) or cadence < 1:
+        problems.append("survey.cadence_days must be a positive integer")
+    if not isinstance(cfg["survey"]["in_pipeline"], bool):
+        problems.append("survey.in_pipeline must be true or false")
+    cap = cfg["survey"]["max_promote_per_cycle"]
+    if not isinstance(cap, int) or isinstance(cap, bool) or cap < 0:
+        problems.append("survey.max_promote_per_cycle must be a non-negative integer")
     return problems
 
 

@@ -20,7 +20,7 @@ Two ideas do most of the work:
 - **A test that has never failed has never been proven to test anything.** So the red run is captured, inspected, and checked before any implementation edit.
 - **An agent's ceiling is the quality of your feedback loops, not the length of your prompt.** So when a cycle stalls twice, the pipeline asks which loop is inadequate instead of writing more words at the model.
 
-It's also a working reference for several patterns from Anthropic's [multi-agent research system](https://www.anthropic.com/engineering/built-multi-agent-research-system): per-tier effort budgets, structured delegation briefs, an artifact-reference protocol, and long-horizon hand-off.
+It's also a working reference for several patterns from Anthropic's [multi-agent research system](https://www.anthropic.com/engineering/built-multi-agent-research-system): per-tier effort budgets, structured delegation briefs, an artifact-reference protocol, and long-horizon hand-off. The survey stage's audit → vet → leverage-rank shape, and the standard that work handed to a zero-context executor must be self-contained, are adapted from [shadcn/improve](https://github.com/shadcn/improve) (MIT).
 
 ## The loop
 
@@ -40,6 +40,12 @@ flowchart LR
   class S,T,Q,C human
   class I machine
 ```
+
+Upstream of all four sits **`/survey`**, which answers the question none of them can: what is worth doing. `/spec` grills a goal you already have; it never finds you one. The survey audits the repo across nine categories with parallel read-only subagents, then — because subagents over-report — re-opens every cited `file:line` itself before you see anything. What survives that vetting is ranked by leverage and routed: tight findings with a named seam become tickets, fuzzy ones become spec seeds, the rest queue.
+
+It is not a command you have to remember. It fires branch-scoped inside `/assay` after the judges, hotspot-scoped on a post-ship cadence, and repo-scoped when `/implement` finds an empty board — because a cadence nobody automates is a cadence nobody runs. Pending findings show up in the SessionStart banner and as `🔍 N` in the statusline. Nothing reaches the board without your pick until you flip `survey.auto` to `promote`, and even then only a HIGH-confidence, S-effort correctness or security defect with a named seam clears the bar. That line — the machine finding work versus the machine choosing it — is drawn on purpose.
+
+The same vetting discipline runs inside the judge panel. Twenty-nine reviewers produce concerns faster than they produce signal, so the lead re-opens every cited location before a concern reaches you or the revise loop, and every drop is counted. `/assay-stats` reports each judge's drop rate, which is how a judge that has become noise gets cut with evidence instead of a hunch.
 
 Calling `/assay "<task>"` directly still works, and on a MEDIUM+ task with no observable outcome or nameable seam it will recommend `/spec` first — because otherwise done-gate asks you to state success criteria *after* the code exists, which is the one moment you're guaranteed to agree with whatever got built. `proceed` is one word away; `--no-spec` skips the gate outright. Both choices are logged.
 
@@ -91,7 +97,7 @@ Assay validates its own structure — the walkthrough below runs the real test +
 
 ## What you get
 
-**13 commands** (`/assay` has four forms)
+**14 commands** (`/assay` has four forms)
 
 | Command | What it does |
 |---------|--------------|
@@ -99,6 +105,7 @@ Assay validates its own structure — the walkthrough below runs the real test +
 | `/assay <spec-id>` | Consume an approved spec from `/spec`. |
 | `/assay <ticket-id>` | Execute one vertical slice. Tier, seam, and acceptance criteria pre-loaded. |
 | `/assay resume` | Resume the last interrupted /assay session. |
+| `/survey` | Audit the repo across nine categories, vet the findings against the code, route survivors to specs or tickets. Fires automatically; the command is the override. |
 | `/spec` | Grill a fuzzy goal into a spec with pinned choices and named seams (draft → approved → shipped). |
 | `/to-tickets` | Slice a spec into vertical tickets with a `blocked_by` DAG. |
 | `/implement` | Work the board: full pipelines back to back, queued for your commit. |
@@ -112,19 +119,19 @@ Assay validates its own structure — the walkthrough below runs the real test +
 | `/cross-learn` | Promote patterns learned in one project namespace into system-level rules. |
 | `/assay-stats` | Is the pipeline earning its cost? Stage fire rates, per-judge acceptance, edit-after-review, first-pass approval — each with a kill threshold and an honest sample size. |
 
-**17 skills** (orchestrated by the commands above)
+**18 skills** (orchestrated by the commands above)
 
-`spec-builder`, `ticket-board`, `tdd-loop`, `qa-queue`, `context-glossary`, `architecture-scan`, `judge-panel`, `done-gate`, `commit-protocol`, `project-memory`, `session-recall`, `operator-model`, `mcp-router`, `notion-bridge`, `skill-curator`, `postmortem`, `plugin-packager`.
+`survey`, `spec-builder`, `ticket-board`, `tdd-loop`, `qa-queue`, `context-glossary`, `architecture-scan`, `judge-panel`, `done-gate`, `commit-protocol`, `project-memory`, `session-recall`, `operator-model`, `mcp-router`, `notion-bridge`, `skill-curator`, `postmortem`, `plugin-packager`.
 
-**3 hooks** (proposal surfacing — see [hooks/README.md](./hooks/README.md))
+**5 hooks** (pending-work surfacing — see [hooks/README.md](./hooks/README.md))
 
-`proposal-watcher.sh` (SessionStart banner), `composed-statusline.sh` (📋 N indicator), `proposal-count.sh` (helper). Surfaces pending skill-curator proposals on session start and in the statusline.
+`proposal-watcher.sh` and `finding-watcher.sh` (SessionStart banners), `composed-statusline.sh` (📋 N and 🔍 N indicators), plus the two count helpers. Surfaces pending skill-curator proposals and pending survey findings on session start and in the statusline.
 
 ## Tested
 
 Assay is markdown that instructs a model, so its compile errors are dangling references — a step citing a renumbered gate check, a command naming a skill that isn't there, a delegation to an uninstalled plugin. None of those fail at runtime; they quietly degrade into the model improvising.
 
-A pytest suite runs in CI to fail the build instead: manifest integrity, skill/command frontmatter, the judge-panel roster count, config-key documentation, lifecycle completeness, dead-plugin references, doc-link resolution, and hook executability.
+A pytest suite runs in CI to fail the build instead: manifest integrity, skill/command frontmatter, the judge-panel roster count, config-key documentation, lifecycle completeness, dead-plugin references, doc-link resolution, hook executability, the survey stage's automatic wiring, and the run recorder's refusal to log a funnel that widens.
 
 ```bash
 uv sync && uv run pytest
