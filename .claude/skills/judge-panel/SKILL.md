@@ -85,22 +85,28 @@ Tier 3 judges are invoked only for CRITICAL changes affecting product strategy, 
 
 ## Per-Judge Model Assignment
 
-Each judge runs on a model matched to the reasoning depth its concern demands, not to the change's risk tier. This collapses panel cost without dropping a single judge: a naming nit on Haiku costs a fraction of the same judge on Opus, while correctness and systemic judgment still get the strongest model. The dispatching step passes each judge its assigned model.
+Each judge runs on a model matched to the reasoning depth its concern demands, not to the change's risk tier. This collapses panel cost without dropping a single judge: a naming nit on `haiku` costs a fraction of the same judge on `opus`, while correctness and systemic judgment still get the strongest model. The dispatching step passes each judge its assigned model.
+
+Model names below are the **Agent tool's `model` aliases** (`opus`, `sonnet`, `haiku`), not versioned model IDs. The alias is what the dispatch parameter accepts, and it keeps resolving to the current release without an edit here — a pinned ID goes stale on the next model ship and is rejected by the dispatch parameter besides.
 
 | Model | Judges | Why |
 |-------|--------|-----|
-| **Opus** (`claude-opus-4-8`) | 1 Senior Staff, 2 Security, 12 Concurrency, 13 Error Handler, 17 Karpathy, 18 Threat Modeler, 20 Regulatory, 21 Failure Mode, all Tier 3 (22–29) | Correctness, security, systemic risk, and strategic judgment — failure here is expensive or irreversible. |
-| **Sonnet** (`claude-sonnet-4-6`) | 3 Performance, 4 Test Architect, 5 API Designer, 6 Data Engineer, 7 DevOps, 10 Backend, 11 Database, 19 Cost Accountant | Substantive review where Sonnet's signal is close to Opus at lower cost. |
-| **Haiku** (`claude-haiku-4-5`) | 8 Accessibility, 9 Frontend, 14 Documentation, 15 Naming Critic, 16 Simplicity | Nit-class / pattern-matching concerns; cheap model is sufficient. |
+| **opus** | 1 Senior Staff, 2 Security, 12 Concurrency, 13 Error Handler, 17 Karpathy, 18 Threat Modeler, 20 Regulatory, 21 Failure Mode, all Tier 3 (22–29) | Correctness, security, systemic risk, and strategic judgment — failure here is expensive or irreversible. |
+| **sonnet** | 3 Performance, 4 Test Architect, 5 API Designer, 6 Data Engineer, 7 DevOps, 10 Backend, 11 Database, 19 Cost Accountant | Substantive review where sonnet's signal is close to opus at lower cost. |
+| **haiku** | 8 Accessibility, 9 Frontend, 14 Documentation, 15 Naming Critic, 16 Simplicity | Nit-class / pattern-matching concerns; cheap model is sufficient. |
 
-Override precedence: a judge's assigned model here wins over the tier default model from `/assay` Step 4. Pass the assigned model to the judge's subagent dispatch (see Judge Dispatch below). Hard floor: judges named in the Hard Constraints (Security, Karpathy on HIGH/CRITICAL) always run at their Opus assignment — never downgraded.
+Override precedence: a judge's assigned model here wins over the tier default model from `/assay` Step 4. Pass the assigned model to the judge's subagent dispatch (see Judge Dispatch below). Hard floor: judges named in the Hard Constraints (Security, Karpathy on HIGH/CRITICAL) always run at their `opus` assignment — never downgraded.
 
 ## Concern-Detection Pre-Pass (diff-aware gating)
 
-Before invoking the tier's judge set, run ONE cheap Haiku pass over the diff to detect which concern categories are actually present. This avoids firing judges whose domain the diff never touches — same rigor where it's relevant, no over-coverage.
+Before invoking the tier's judge set, run ONE cheap `haiku` pass over the diff to detect which concern categories are actually present. This avoids firing judges whose domain the diff never touches — same rigor where it's relevant, no over-coverage.
+
+**Scope: Tier 1 and Tier 2 only.** Tier 3 judges are selected by the CRITICAL change-type map below and are never intersected with detected tags. A content scanner reading a diff can see that a query changed; it cannot see that the change is a one-way door, or that it alters what the product charges for. Those are properties of the decision, not of the text, so gating Tier 3 on tags would silently delete the entire business panel from every CRITICAL review — which is the one tier that exists to have it.
 
 The pre-pass returns a tag set drawn from:
-`auth` · `secrets` · `user-input` · `concurrency` · `async` · `query` · `schema` · `migration` · `ui` · `accessibility` · `external-api` · `error-handling` · `naming` · `docs` · `perf-hot-path` · `financial` · `pii`
+`auth` · `secrets` · `user-input` · `concurrency` · `async` · `query` · `schema` · `migration` · `ui` · `accessibility` · `api-contract` · `external-api` · `error-handling` · `naming` · `docs` · `perf-hot-path` · `financial` · `pii`
+
+`api-contract` fires on a changed **public function signature, endpoint route or payload shape, exported module interface, CLI flag, or serialized schema contract** — something a caller outside this diff depends on. It is the inverse of `external-api`: that tag means the diff *consumes* someone else's interface, this one means it *publishes* its own.
 
 Map tags → judges (a judge fires only if at least one of its tags is present AND it is in the tier template):
 
@@ -110,6 +116,7 @@ Map tags → judges (a judge fires only if at least one of its tags is present A
 | concurrency, async | 12 Concurrency, 10 Backend |
 | query, schema, migration | 6 Data Engineer, 11 Database |
 | ui, accessibility | 8 Accessibility, 9 Frontend |
+| api-contract | 5 API Designer |
 | external-api | 19 Cost Accountant, 7 DevOps |
 | error-handling | 13 Error Handler |
 | naming, docs | 14 Documentation, 15 Naming Critic |
@@ -118,7 +125,7 @@ Map tags → judges (a judge fires only if at least one of its tags is present A
 
 Always-on regardless of tags (the structural reviewers): 1 Senior Staff, 4 Test Architect, 16 Simplicity.
 
-**Gating floor (never bypassed):** for HIGH/CRITICAL, 2 Security, 17 Karpathy, and 21 Failure Mode Analyst fire regardless of detected tags — the pre-pass can ADD judges but can NEVER drop these. This preserves the Hard Constraints below. The pre-pass output is the *intersection* with the tier template, then *union* with this floor.
+**Gating floor (never bypassed):** for HIGH/CRITICAL, 2 Security, 17 Karpathy, and 21 Failure Mode Analyst fire regardless of detected tags — the pre-pass can ADD judges but can NEVER drop these. This preserves the Hard Constraints below. For Tier 1 and Tier 2, the pre-pass output is the *intersection* with the tier template, then *union* with this floor. Tier 3 bypasses the intersection entirely per the scope rule above.
 
 If the pre-pass itself fails or times out, fall back to the full tier template (fail toward more coverage, not less).
 
@@ -158,6 +165,7 @@ Full Tier 1 + full Tier 2 + relevant Tier 3:
   - Pricing/offer change → 22 (Hormozi)
   - Architectural one-way door → 24 (Bezos) + 26 (Munger)
   - Long-term platform decision → 25 (Buffett) + 27 (Thiel)
+  - Automation or leverage change → 23 (Naval) — does the shipped thing scale with Brandon's attention or independent of it?
   - User-facing product launch → 22, 28, 29
   - Always include 26 (Munger) for invert-the-problem on any CRITICAL change
 

@@ -198,11 +198,13 @@ The lead tracks **subagent dispatch count** (a real, countable quantity) against
 
 | Tier | Default model | Rationale |
 |------|---------------|-----------|
-| TRIVIAL / LOW | Haiku (`claude-haiku-4-5`) | Mechanical changes; cheap model is sufficient. |
-| MEDIUM | Sonnet (`claude-sonnet-4-6`) | Feature work; balanced cost/quality. |
-| HIGH / CRITICAL | Opus (`claude-opus-4-8`) | Schema/auth/financial/irreversible; pay for depth. |
+| TRIVIAL / LOW | `haiku` | Mechanical changes; cheap model is sufficient. |
+| MEDIUM | `sonnet` | Feature work; balanced cost/quality. |
+| HIGH / CRITICAL | `opus` | Schema/auth/financial/irreversible; pay for depth. |
 
-The lead dispatches every subagent (Steps 5, 7) with the tier's default model. Judge-panel (Step 8) overrides per-judge — correctness/security/systemic judges run Opus regardless of tier, nit-class judges run Haiku (see judge-panel SKILL.md roster `model` column). Brandon can override the tier model with the existing `--risk=` flag (which relocks the tier and its model).
+Model names are the Agent tool's `model` aliases, not versioned model IDs — the alias is what the dispatch parameter accepts, and it tracks the current release without an edit here.
+
+The lead dispatches every subagent (Steps 5, 7) with the tier's default model. Judge-panel (Step 8) overrides per-judge — correctness/security/systemic judges run `opus` regardless of tier, nit-class judges run `haiku` (see judge-panel SKILL.md roster `model` column). Brandon can override the tier model with the existing `--risk=` flag (which relocks the tier and its model).
 
 Output: risk tier + effort budget + tier model locked for the rest of the pipeline.
 
