@@ -299,13 +299,23 @@ Invoke **judge-panel** with the changeset and risk tier from Step 4.
 
 **Diff snapshot (before).** Before dispatching any judge, record the changeset's stat line into `state.json.diff_before_review` as `{files, added, deleted}`. Step 14's run record diffs this against the post-review stat to compute whether the panel changed anything. Without the before-snapshot the edit-after-review metric is uncomputable, so take it even when the panel is expected to return `ship`.
 
-- TRIVIAL: skip judges (unless `--judges` flag forces).
+**Always invoke the skill.** Tier and flags decide which judges fire; they never
+decide whether judge-panel loads. Short-circuiting here is how a caller silently
+revokes a callee's guarantees: the skill's own absolute exceptions — Security on
+any security-tagged diff, at any tier, under any override — can only run if the
+skill runs. Pass the tier and the flags and let it decide.
+
+- TRIVIAL: the skill dispatches no judges, except Security on a diff touching
+  `auth`, `secrets`, `user-input`, `pii`, or `financial`. `--judges` forces the
+  panel.
 - LOW: 1-2 Tier 1 judges based on change type.
 - MEDIUM: 3-5 Tier 1 judges.
 - HIGH: full Tier 1 + minimum 2 relevant Tier 2 judges.
 - CRITICAL: full Tier 1 + full Tier 2 + relevant Tier 3 judges.
 
-Honor `--no-judges` flag for TRIVIAL/LOW only. Refuse for HIGH/CRITICAL.
+Pass `--no-judges` through for TRIVIAL/LOW only; refuse it for HIGH/CRITICAL.
+It suppresses the panel, never the Security judge on a security-tagged diff —
+that judge is not overridable at any tier, and the skill enforces it.
 
 Judges output verdict: `ship` | `revise` | `block`.
 - ship — proceed to Step 10.
@@ -552,7 +562,7 @@ If pipeline is interrupted (Brandon types "stop", subagent times out and Brandon
 - Loads most recent session state.
 - Shows Brandon the summary: "Resuming from Step <N>. Last action: <description>. Continue? (yes / restart / abort)."
 - On yes, picks up at the next step.
-- If state has `dry_run: true`, resume re-verifies the working tree matches the saved changeset (warn if drift), then runs Step 11 COMMIT onward as a normal commit (no second judge pass unless files changed since dry-run).
+- If state has `dry_run: true`, resume re-verifies the working tree matches the saved changeset (warn if drift), then runs Step 11 COMMIT onward as a normal commit. If ANY file changed since the dry-run, Step 8 re-runs in full — the saved verdict describes a diff that no longer exists, and a drift warning is not a substitute for re-judging.
 
 ### Long-Horizon Hand-off (context-overflow guard)
 
@@ -601,7 +611,7 @@ The skill is opportunistic — it runs after state is already safe on disk. Bran
 | 5 DISPATCH | Subagent plugin missing | Sequential inline. Note. |
 | 6 MCP ROUTE | All MCPs disconnected | Surface to Brandon. Offer continue without MCPs or abort. |
 | 7 EXECUTE | Subagent times out | Brandon picks: retry, inline, abort. |
-| 8 JUDGE | Judge unreachable | Skip that judge. If panel cannot form quorum (≥50% of expected judges), surface to Brandon. |
+| 8 JUDGE | Judge unreachable | Skip that judge and continue, UNLESS it is mandatory under judge-panel Aggregation rule 0 (Security on a security-tagged diff at any tier; Karpathy and Failure Mode on HIGH/CRITICAL; Threat Modeler on a security-tagged HIGH/CRITICAL) — those get one re-dispatch, then the verdict is `block`. If the panel cannot form quorum (≥50% of expected judges), surface to Brandon. |
 | 9 REVISE | 2 cycles exceeded | Halt. Surface unresolved blockers. |
 | 10 DONE GATE | Any check fails | Halt. Show fix. |
 | 11 COMMIT | Hook rejection | Surface. Offer auto-fix. Never bypass. |
@@ -619,6 +629,8 @@ The skill is opportunistic — it runs after state is already safe on disk. Bran
 ## Hard Constraints
 
 - NEVER skip judge-panel for HIGH/CRITICAL risk, regardless of flags.
+- NEVER skip invoking judge-panel at all. Tier and flags select judges inside the skill; they do not gate whether it is consulted. A caller that short-circuits the skill revokes every guarantee the skill makes.
+- NEVER return a verdict other than `block` when a judge mandatory under judge-panel Aggregation rule 0 did not run — whether it failed, or was never dispatched.
 - NEVER auto-push without `--auto-push` flag.
 - NEVER deploy (Step 11.5) without explicit Brandon approval. `--auto-push` and `--force` govern git, NOT production — neither bypasses the deploy gate. Rollback is likewise explicit-approval only.
 - NEVER push to protected branches without per-push confirmation.
