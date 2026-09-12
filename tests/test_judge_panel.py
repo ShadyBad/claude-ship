@@ -151,11 +151,19 @@ def test_security_judge_floor_is_not_tier_conditional():
     assert "Any tier" in marker, "gating floor states no any-tier rule for Security"
 
 
-def test_hard_constraints_name_every_mandatory_judge():
-    """Aggregation rule 0's mandatory set must not outrun the Hard Constraints."""
-    constraints = _section("## Hard Constraints")
+def test_canonical_section_names_every_mandatory_judge():
+    """The canonical block is now the single place the set is enumerated.
+
+    This previously asserted each judge appeared in Hard Constraints. That was
+    the right property under the old design, where the set was restated in six
+    places; under one canonical statement, restating it there would be the
+    defect. The property survives, retargeted at the block that now owns it.
+    """
+    canon = _section("## The Mandatory Set")
     for judge in ("Security", "Karpathy", "Failure Mode Analyst", "Threat Modeler"):
-        assert judge in constraints, f"no Hard Constraint covers mandatory judge {judge}"
+        assert judge in canon, f"canonical Mandatory Set omits {judge}"
+    constraints = _section("## Hard Constraints")
+    assert "Mandatory Set" in constraints, "Hard Constraints do not cite the canonical set"
 
 
 def test_output_block_reports_unreachable_judges():
@@ -192,29 +200,19 @@ def test_security_survives_every_override_path():
     assert "not overridable" in overrides, "--no-judges does not exempt Security"
 
 
-def test_threat_modeler_tag_set_is_stated_consistently():
-    """Rule 0, the tag row, and the Hard Constraint must name the same tags."""
-    expected = {"auth", "secrets", "user-input", "pii"}
+def test_threat_modeler_tag_set_excludes_financial():
+    """`financial` is judge 20's concern, not judge 18's.
 
-    def tags(blob: str) -> set[str]:
-        return {tag for tag in expected if tag in blob}
-
-    # Slice to the end of rule 0's list item rather than a character count, so
-    # the test does not silently clip when the rule is reworded.
-    rules = _section("## Aggregation Rules")
-    rule0 = re.search(r"18 Threat Modeler.*?(?=\n\d+\.\s)", rules, re.S)
-    assert rule0, "rule 0 does not mention the Threat Modeler"
-    rule0 = rule0.group(0)
-    constraint = [
-        line for line in _section("## Hard Constraints").splitlines() if "Threat Modeler" in line
-    ]
-    assert constraint, "no Hard Constraint names the Threat Modeler"
-    assert tags(rule0) == expected, f"rule 0 tag set differs: {tags(rule0)}"
-    assert tags(constraint[0]) == expected, f"constraint tag set differs: {tags(constraint[0])}"
-    # `financial` is judge 20's concern. It may appear here only to be excluded.
-    assert "financial" not in rule0 or "not `financial`" in rule0, (
-        "rule 0 appears to grant judge 18 the `financial` tag"
-    )
+    Previously this cross-checked three separate statements of judge 18's tags
+    for agreement. There is now one statement, so disagreement is structurally
+    impossible and only the content needs asserting.
+    """
+    canon = _section("## The Mandatory Set")
+    row = [ln for ln in canon.splitlines() if "Threat Modeler" in ln]
+    assert row, "canonical set has no Threat Modeler row"
+    for tag in ("auth", "secrets", "user-input", "pii"):
+        assert tag in row[0], f"Threat Modeler row omits {tag}"
+    assert "not `financial`" in row[0], "Threat Modeler row does not exclude `financial`"
 
 
 def test_judge_numbers_are_contiguous_and_unique():
@@ -312,3 +310,43 @@ def test_orchestrator_unreachable_judge_defers_to_rule_zero():
     row = [ln for ln in assay.splitlines() if "| 8 JUDGE |" in ln]
     assert row, "no Step 8 row in the failure-mode table"
     assert "rule 0" in row[0], "unreachable-judge row does not defer to Aggregation rule 0"
+
+
+def test_mandatory_set_is_enumerated_exactly_once():
+    """Six restatements of one rule is how the rule drifts.
+
+    The security-tag list defining when judge 2 is mandatory must appear in
+    exactly one place -- the canonical section -- with every other mention
+    citing it. Five review rounds found five live bypasses precisely because the
+    rule was written out in six places and nothing failed when they disagreed.
+    """
+    canon = "## The Mandatory Set"
+    skill = _text()
+    assay = (SKILLS_DIR.parent / "commands" / "assay.md").read_text()
+    assert canon in skill, "no canonical Mandatory Set section"
+
+    # The five-tag security list, in either the bulleted or prose spelling.
+    # Judge 18's narrower list lives inside the canonical block too, which is
+    # correct -- the property is that NO enumeration appears outside it.
+    pattern = re.compile(r"`auth`[^\n]{0,40}`secrets`[^\n]{0,60}`pii`[^\n]{0,40}`financial`")
+    section_start = skill.index(canon)
+    section_end = skill.index("\n## ", section_start + 1)
+    outside = [
+        skill[: m.start()].count("\n") + 1
+        for m in pattern.finditer(skill)
+        if not (section_start < m.start() < section_end)
+    ]
+    assert not outside, f"mandatory set restated outside the canonical section, lines {outside}"
+    assert list(pattern.finditer(skill)), "canonical section does not enumerate the set at all"
+
+    assert not pattern.search(assay), "assay.md restates the mandatory set instead of citing it"
+
+
+def test_enforcement_is_a_hook_not_only_prose():
+    """The rule is stated here; the hook is what makes it true."""
+    root = SKILLS_DIR.parent.parent
+    hook = root / "hooks" / "git" / "commit-msg"
+    assert hook.exists(), "no commit-msg hook"
+    assert hook.stat().st_mode & 0o111, "commit-msg hook is not executable"
+    assert "The Mandatory Set" in _text()
+    assert "hooks/git/commit-msg" in _text(), "SKILL.md does not point at its enforcement"

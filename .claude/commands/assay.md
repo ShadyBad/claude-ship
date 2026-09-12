@@ -305,9 +305,8 @@ revokes a callee's guarantees: the skill's own absolute exceptions — Security 
 any security-tagged diff, at any tier, under any override — can only run if the
 skill runs. Pass the tier and the flags and let it decide.
 
-- TRIVIAL: the skill dispatches no judges, except Security on a diff touching
-  `auth`, `secrets`, `user-input`, `pii`, or `financial`. `--judges` forces the
-  panel.
+- TRIVIAL: the skill dispatches no judges, except Security on a security-tagged
+  diff (judge-panel SKILL.md, "The Mandatory Set"). `--judges` forces the panel.
 - LOW: 1-2 Tier 1 judges based on change type.
 - MEDIUM: 3-5 Tier 1 judges.
 - HIGH: full Tier 1 + minimum 2 relevant Tier 2 judges.
@@ -316,6 +315,21 @@ skill runs. Pass the tier and the flags and let it decide.
 Pass `--no-judges` through for TRIVIAL/LOW only; refuse it for HIGH/CRITICAL.
 It suppresses the panel, never the Security judge on a security-tagged diff —
 that judge is not overridable at any tier, and the skill enforces it.
+
+**Write the receipt (last thing in Step 8, after the final revise cycle).** The
+commit gate refuses a security-tagged diff whose receipt carries no security
+verdict, and the receipt is keyed to the diff that was actually judged:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_judge_receipt.py" "$SESSION_DIR/state.json"
+```
+
+It reads `state.json.judges` and hashes `git diff --cached`, so stage the final
+changeset before calling it. The state path is required and it refuses to mint a
+receipt from a state that records no judges — an empty receipt can only produce a
+block, which would route every security-tagged commit to the trailer escape. Write it AFTER Step 9 REVISE has settled: a receipt
+minted before the last edit describes a diff that no longer exists, and the gate
+will correctly refuse it.
 
 Judges output verdict: `ship` | `revise` | `block`.
 - ship — proceed to Step 10.
@@ -615,6 +629,8 @@ The skill is opportunistic — it runs after state is already safe on disk. Bran
 | 9 REVISE | 2 cycles exceeded | Halt. Surface unresolved blockers. |
 | 10 DONE GATE | Any check fails | Halt. Show fix. |
 | 11 COMMIT | Hook rejection | Surface. Offer auto-fix. Never bypass. |
+| 11 COMMIT | Mandatory-judge gate blocks | The staged diff looks security-tagged and no security verdict covers it. Let judge 2 run and re-write the receipt, or add `Security-Review: skipped -- <reason>` to the commit message. NEVER `--no-verify`. |
+| 11 COMMIT | Gate itself errors | It fails closed by design. Fix the gate, or use the trailer. If the gate is broken badly enough to block its own fix, `git -c core.hooksPath=/dev/null commit` scopes the bypass to one commit without disabling it globally. |
 | 8.5 SURVEY | Branch survey errors or times out | Log it in the report. Continue to REVISE with the judge concerns alone. Never block. |
 | 12.5 SURVEY | Cadence survey fails | Log. Do not re-stamp `last-survey-run.txt`, so the next ship retries. Never block. |
 | 12 LEARN | Memory write fails | Retry once. Then log error. Do not block. |

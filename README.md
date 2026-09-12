@@ -169,6 +169,54 @@ cp -ri /tmp/assay/.claude/skills/* ~/.claude/skills/
 
 See [INSTALL.md](./INSTALL.md) for the full options matrix.
 
+## The commit gate
+
+The judge panel's floor — "a security-relevant diff never ships without the
+Security judge" — is stated in prose and enforced by a git hook, because prose
+enforcing prose has no failure signal. Turn it on per clone:
+
+```bash
+git config core.hooksPath hooks/git
+```
+
+The hook refuses a commit whose staged diff looks security-relevant and whose
+judge receipt carries no security verdict. It runs its own detector over the
+diff and never trusts the pipeline's tag output, so it still works when that
+detection never ran. When it fires on something that is genuinely not a security
+change, record why:
+
+```
+Security-Review: skipped -- rubric prose, not executable code
+```
+
+That trailer is the escape and the measurement: `git log --grep='Security-Review: skipped'`
+gives the real false-positive rate. Above roughly half of commits, the detector
+is wrong and should be narrowed rather than tolerated.
+
+It fails closed. If the gate breaks badly enough to block its own fix,
+`git -c core.hooksPath=/dev/null commit` scopes the bypass to one commit instead
+of disabling it globally. `--no-verify` is not the answer.
+
+Two limits, stated because a gate that overclaims is worse than one that does
+not:
+
+- **`core.hooksPath` replaces the whole hooks directory**, not one hook. Nothing
+  else lives in `.git/hooks` here today, but anything that later installs there
+  — husky, pre-commit, git-lfs — will silently never run. Move those into
+  `hooks/git/` alongside this one.
+- **The content detector is incomplete, and will stay incomplete.** It is a
+  lexical scan, and three successive review rounds each found a real identifier
+  shape it missed — `new_api_key` (snake_case, `_` is a word character),
+  `clientSecret` (camelCase), and semantic weakenings that carry no keyword at
+  all like `verify=False`. Each was fixed; the next round will likely find
+  another. Path matching is the stable signal here and content matching is a
+  bonus, so do not read a clean gate as "no secret in this diff". If that
+  guarantee is what you want, add a real scanner alongside it.
+- **Merges, rebases, and cherry-picks are not covered.** Git does not run
+  `commit-msg` for a merge, and replaying a commit through `git rebase` or
+  `git cherry-pick` does not re-run it either. The gate covers the commit that
+  introduces a change, never the operations that move it.
+
 ## Configure
 
 Where tickets live, what the glossary is called, and how hard the TDD gate bites are per-install choices, kept outside the repo so a `git pull` never stomps them:

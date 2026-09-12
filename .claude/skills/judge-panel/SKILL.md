@@ -34,6 +34,38 @@ The skill returns:
 "tokens_used": <estimate>
 }
 
+## The Mandatory Set
+
+**This is the only enumeration of the mandatory judges in the repository.**
+Everything else -- the gating floor, the TRIVIAL branch, the override flags,
+Aggregation rule 0, the Hard Constraints, and `/assay` Step 8 -- cites this
+section rather than restating it. Five review rounds on 2026-09-12 each found a
+different live path from a security-relevant diff to `ship` with judge 2 never
+run, and the reason every fix was followed by another gap is that the rule was
+written out in six places and nothing failed when they disagreed.
+
+A diff is **security-tagged** when it carries any of:
+
+`auth` · `secrets` · `user-input` · `pii` · `financial`
+
+The mandatory judges for a run are:
+
+| Judge | Mandatory when |
+|-------|----------------|
+| 2 Security | the diff is security-tagged — **at any tier, under any override** |
+| 17 Karpathy | tier is HIGH or CRITICAL |
+| 21 Failure Mode Analyst | tier is HIGH or CRITICAL |
+| 18 Threat Modeler | tier is HIGH or CRITICAL **and** the diff carries `auth`, `secrets`, `user-input`, or `pii` (not `financial`, which is judge 20's concern) |
+
+A mandatory judge must return `approve`, `block`, or `nit`. Anything else --
+`unreachable`, or no entry because it was never dispatched -- is handled by
+Aggregation rule 0. A judge that never ran and a judge that was skipped are the
+same event.
+
+Enforcement is not this document. `hooks/git/commit-msg` refuses a commit whose
+staged diff looks security-tagged and whose receipt carries no security verdict.
+Prose states the rule; the hook is what makes it true.
+
 ## Judge Roster
 
 ### Tier 1 — Code Quality Judges (16)
@@ -130,7 +162,7 @@ Always-on regardless of tags (the structural reviewers): 1 Senior Staff, 4 Test 
 
 **Gating floor (never bypassed).** Two rules, and the first applies at every tier:
 
-- **Any tier:** if the diff carries `auth`, `secrets`, `user-input`, `pii`, or `financial`, then 2 Security fires — even when the tier template does not list it. The Hard Constraint says never skip Security for those changes *regardless of tier*, and a MEDIUM template like `Modified business logic → 1, 3, 4, 13, 16` would otherwise intersect Security straight out of an auth-touching review.
+- **Any tier:** if the diff is security-tagged (see The Mandatory Set), 2 Security fires — even when the tier template does not list it. A MEDIUM template like `Modified business logic → 1, 3, 4, 13, 16` would otherwise intersect Security straight out of an auth-touching review.
 - **HIGH/CRITICAL:** 2 Security, 17 Karpathy, and 21 Failure Mode Analyst fire regardless of detected tags.
 
 The pre-pass can ADD judges but can NEVER drop these. This preserves the Hard Constraints below. For Tier 1 and Tier 2, the pre-pass output is the *intersection* with the tier template, then *union* with this floor. Tier 3 bypasses the intersection entirely per the scope rule above.
@@ -150,9 +182,8 @@ evidence of a missing concern.
 ### TRIVIAL
 No judges. `/assay` skips the panel entirely. Return immediate `ship` verdict.
 
-Exception, and it is absolute: if the diff touches `auth`, `secrets`,
-`user-input`, `pii`, or `financial`, 2 Security fires anyway and Aggregation
-rule 0 applies. A change is not trivial because it is small; it is trivial
+Exception, and it is absolute: if the diff is security-tagged (see The
+Mandatory Set), 2 Security fires anyway and Aggregation rule 0 applies. A change is not trivial because it is small; it is trivial
 because nothing depends on getting it right, and security-relevant code never
 qualifies.
 
@@ -195,7 +226,7 @@ Full Tier 1 + full Tier 2 + relevant Tier 3:
 
 Brandon can override the tier-based selection via `/assay`:
 
-- `/assay --no-judges "<task>"` — skip the panel entirely. Used for trivial fixes Brandon already verified. Does NOT skip 2 Security on a diff touching `auth`, `secrets`, `user-input`, `pii`, or `financial` — that judge is not overridable at any tier. The pre-pass still runs: the any-tier Security floor is tag-conditional, so suppressing tag detection would suppress the exception it triggers.
+- `/assay --no-judges "<task>"` — skip the panel entirely. Used for trivial fixes Brandon already verified. Does NOT skip 2 Security on a security-tagged diff (see The Mandatory Set) — that judge is not overridable at any tier. The pre-pass still runs: the any-tier Security floor is tag-conditional, so suppressing tag detection would suppress the exception it triggers.
 - `/assay --judges=karpathy,security "<task>"` — invoke only the named judges. Match by name (case-insensitive, partial match allowed). The pre-pass still runs, because Aggregation rule 0's mandatory set is tag-conditional and an explicit list does not suppress 2 Security on a security-tagged diff.
 - `/assay --judges=tier1 "<task>"` — invoke all of Tier 1.
 - `/assay --judges=+hormozi "<task>"` — add judges to the tier defaults (the `+` prefix).
@@ -280,13 +311,9 @@ be vetted, and goes to `log_for_later` rather than `must_address_before_ship`.
 After the vet pass, aggregate what survived it. Every count below is a
 post-vet count:
 
-0. **Mandatory judges must actually report.** The mandatory set for a run is:
-   2 Security whenever the diff carries `auth`, `secrets`, `user-input`, `pii`,
-   or `financial` at any tier; 17 Karpathy and 21 Failure Mode Analyst on
-   HIGH/CRITICAL; 18 Threat Modeler on HIGH/CRITICAL carrying `auth`,
-   `secrets`, `user-input`, or `pii` (not `financial` — that is judge 20's
-   concern, and this list must match the tag row and the Hard Constraint
-   exactly). Before aggregating, check each mandatory judge for an
+0. **Mandatory judges must actually report.** The mandatory set is defined
+   once, in The Mandatory Set above. Before aggregating, check each of its
+   members for an
    `approve`, `block`, or `nit` verdict. Anything else — `unreachable`, or no
    entry at all because the judge was never dispatched — forces one
    re-dispatch. If it still has no verdict, the aggregate is `block`. It is
@@ -401,10 +428,8 @@ After 3 such dismissals of the same combination, the `operator-model` skill shou
 - NEVER reveal one judge's output to another judge (each must reason independently).
 - NEVER let the agent that wrote the diff also judge it. A fresh context per judge is the mechanism, not a nicety.
 - NEVER return `ship` on a standards-clean diff that misses the spec. The spec axis is not optional.
-- NEVER skip the Security Reviewer for changes touching auth, secrets, user data, or financial calculation, regardless of tier or override. This binds every path that would otherwise return a verdict without it: a TRIVIAL classification, `--no-judges`, a tier template that omits judge 2, and a pre-pass that failed before it could raise a tag.
-- NEVER skip Karpathy (judge 17) on HIGH or CRITICAL — overengineering check is non-negotiable.
-- NEVER skip the Failure Mode Analyst (judge 21) on HIGH or CRITICAL.
-- NEVER skip the Threat Modeler (judge 18) on a HIGH or CRITICAL change carrying `auth`, `secrets`, `user-input`, or `pii`.
+- NEVER skip a judge in The Mandatory Set. That binds every path which would otherwise return a verdict without it: a TRIVIAL classification, `--no-judges`, a tier template that omits the judge, and a pre-pass that failed before it could raise a tag.
+- NEVER narrow The Mandatory Set anywhere but in The Mandatory Set itself. A second enumeration is the defect, not a convenience.
 - NEVER let a concern reach Brandon, the revise loop, or the aggregate verdict
   without the vet pass re-opening its cited location. An unvetted concern is a
   claim, not a finding.

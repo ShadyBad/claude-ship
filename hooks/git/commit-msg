@@ -1,0 +1,50 @@
+#!/bin/sh
+# Refuse a security-relevant commit whose mandatory judge never reported.
+#
+# commit-msg, not pre-commit: the escape is a `Security-Review: skipped -- why`
+# trailer, and pre-commit runs before COMMIT_EDITMSG exists, so a pre-commit
+# hook cannot see the trailer it is meant to honour.
+#
+# This wrapper is sh rather than python on purpose. It is the only layer that
+# still runs when python3 is missing or scripts/ is absent -- a python hook in
+# that state never executes and prints nothing, leaving a fail-closed gate
+# blocking every commit in the repo with no visible way out.
+#
+# Activate with:  git config core.hooksPath hooks/git
+# Spec: judge-enforcement-model-2026-09-12
+set -u
+
+# Every path that fails WITHOUT a verdict must print this. Exit 1 alone means
+# "the gate ran and refused", which suppresses it -- that distinction has now
+# been got wrong twice, so the text lives in one function called from both.
+# Every path that fails WITHOUT a verdict must print this. Exit 1 alone means
+# "the gate ran and refused", which suppresses it -- that distinction has now
+# been got wrong twice, so the text lives in one function called from both.
+#
+# Built from `echo` rather than a `cat` heredoc on purpose: this function exists
+# for broken-environment failures, and a heredoc needs /bin/cat on PATH. With
+# PATH empty the recovery text itself failed to print, which is the one moment
+# it is needed.
+escape() {
+    echo "" >&2
+    echo "mandatory-judge gate could not run, and fails closed." >&2
+    echo "Usually one of:" >&2
+    echo "  - a corrupt or truncated .assay/judge-receipt.json" >&2
+    echo "      delete it, then re-mint:" >&2
+    echo "      python3 scripts/write_judge_receipt.py <state.json>" >&2
+    echo "  - python3 not on PATH, or scripts/ missing at this revision" >&2
+    echo "  - git not on PATH" >&2
+    echo "" >&2
+    echo "  To commit anyway, once:" >&2
+    echo "    git -c core.hooksPath=/dev/null commit" >&2
+    echo "" >&2
+}
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { escape; exit 1; }
+
+python3 "$ROOT/scripts/check_mandatory_judges.py" "$1"
+status=$?
+[ $status -eq 0 ] && exit 0
+[ $status -eq 1 ] && exit 1
+escape
+exit 1
