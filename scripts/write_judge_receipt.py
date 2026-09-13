@@ -28,7 +28,7 @@ def main(state_path: str) -> int:
     caught it. A receipt that cannot testify to anything is worse than no
     receipt, because it looks like one.
     """
-    state = json.loads(pathlib.Path(state_path).read_text())
+    state = json.loads(pathlib.Path(state_path).read_text(encoding="utf-8", errors="replace"))
     judges = [
         {"judge": j.get("judge", ""), "verdict": j.get("verdict", "")}
         for j in state.get("judges", [])
@@ -41,8 +41,16 @@ def main(state_path: str) -> int:
         )
         return 1
 
+    # Third instance of this call in the tree. Without `errors=` a staged diff
+    # containing one non-UTF-8 byte crashes here, so a receipt could never be
+    # minted for it -- the gate would then refuse that commit forever with no
+    # way forward but the trailer.
     diff = subprocess.run(
-        ["git", "diff", "--cached"], capture_output=True, text=True, check=True
+        ["git", "diff", "--cached"],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=True,
     ).stdout
     if not diff:
         print("write_judge_receipt: nothing staged; stage the changeset first", file=sys.stderr)

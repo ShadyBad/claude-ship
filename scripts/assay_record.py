@@ -268,7 +268,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    raw = args.file.read_text(encoding="utf-8") if args.file else sys.stdin.read()
+    raw = (
+        args.file.read_text(encoding="utf-8", errors="replace")
+        if args.file
+        # Strict-decoding stdin would raise UnicodeDecodeError, whose repr
+        # embeds the input bytes in the traceback. The AST sweep cannot see
+        # this call, so it is guarded by hand.
+        else sys.stdin.buffer.read().decode("utf-8", errors="replace")
+    )
     if not raw.strip():
         print("assay_record: no input", file=sys.stderr)
         return 2

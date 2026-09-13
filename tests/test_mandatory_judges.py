@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import pathlib
 
 import pytest
 from check_mandatory_judges import Verdict, check_commit, detect_security_relevance
@@ -29,6 +30,20 @@ AUTH_DIFF = """diff --git a/app/auth/session.py b/app/auth/session.py
 +def check(token):
 +    return token == os.environ["API_KEY"]
 """
+
+
+# Credential fixtures are ASSEMBLED AT RUNTIME, never written as literals.
+# GitHub push protection classified a literal `sk_live_...` fixture here as a
+# real Stripe key and refused the push -- correctly, since a credential-shaped
+# literal in a repo is a liability whether or not it is live. Building them
+# from parts keeps the detector under test while leaving no scannable token on
+# disk. Independent confirmation that the shape matching works, incidentally.
+_FAKE = {
+    "github": "ghp_" + "F" * 36,
+    "aws": "AKIA" + "Q" * 16,
+    "stripe": "sk_" + "live_" + "0" * 24,
+    "slack": "xoxb-" + "1" * 12 + "-" + "z" * 12,
+}
 
 
 def _receipt(diff: str, judges=(("Security Reviewer", "approve"),)):
@@ -255,3 +270,173 @@ def test_revise_verdict_does_not_license_a_commit():
     made -- letting it through would contradict outcome-not-attendance."""
     r = _receipt(AUTH_DIFF, judges=(("Security Reviewer", "revise"),))
     assert not check_commit(AUTH_DIFF, r, "feat: x").ok
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f'GITHUB_TOKEN = "{_FAKE["github"]}"',
+        f'AWS = "{_FAKE["aws"]}"',
+        f'S = "{_FAKE["stripe"]}"',
+        "-----BEGIN RSA PRIVATE KEY-----",
+        f'SLACK = "{_FAKE["slack"]}"',
+    ],
+)
+def test_bare_credential_shapes_are_detected(line):
+    """A secret pasted with no identifier name carries none of the keywords.
+
+    `GITHUB_TOKEN = "ghp_..."` happens to contain `token`, but the shape match
+    is what catches the case where the variable is called `x` -- an entire
+    class of leak the keyword scan cannot see by construction.
+    """
+    diff = f"diff --git a/c.py b/c.py\n--- a/c.py\n+++ b/c.py\n@@ -1 +1,2 @@\n x\n+{line}\n"
+    assert detect_security_relevance(diff), f"missed credential shape: {line}"
+
+
+def test_credential_shape_survives_an_innocuous_variable_name():
+    """The keyword scan cannot help here; only the shape match can."""
+    diff = (
+        "diff --git a/c.py b/c.py\n--- a/c.py\n+++ b/c.py\n@@ -1 +1,2 @@\n x\n"
+        f'+x = "{_FAKE["github"]}"\n'
+    )
+    hits = detect_security_relevance(diff)
+    assert any(h.startswith("shape:") for h in hits), f"shape match did not fire: {hits}"
+
+
+def test_shapes_do_not_fire_on_prose_or_hashes():
+    diff = (
+        "diff --git a/a.md b/a.md\n--- a/a.md\n+++ b/a.md\n@@ -1 +1,2 @@\n x\n"
+        "+See commit a970ea4 and the BEGIN section of the README.\n"
+    )
+    assert not detect_security_relevance(diff)
+
+
+def test_refusing_security_verdict_names_the_actual_state():
+    """'no security judge verdict' described the wrong state when judge 2 ran
+    and asked for changes. Logged as a nit on the approve round, applied here."""
+    r = _receipt(AUTH_DIFF, judges=(("Security Reviewer", "block"),))
+    v = check_commit(AUTH_DIFF, r, "feat: x")
+    assert not v.ok
+    assert "does not license a commit" in v.reason
+    assert "no security judge verdict" not in v.reason
+
+    absent = _receipt(AUTH_DIFF, judges=(("Simplicity Judge", "approve"),))
+    assert "no security judge verdict" in check_commit(AUTH_DIFF, absent, "feat: x").reason
+
+
+def test_evidence_never_echoes_credential_material():
+    """The evidence string is printed to stderr from a git hook.
+
+    A secret scanner that echoes even a prefix of what it found leaks the thing
+    it exists to protect, into terminal scrollback and CI logs.
+    """
+    secret = _FAKE["github"]
+    diff = f'diff --git a/c.py b/c.py\n--- a/c.py\n+++ b/c.py\n@@ -1 +1,2 @@\n x\n+x = "{secret}"\n'
+    hits = detect_security_relevance(diff)
+    assert hits, "shape not detected at all"
+    joined = " ".join(hits)
+    assert "shape:github-pat" in joined, f"shape not named: {hits}"
+    for size in (12, 8, 6):
+        assert secret[:size] not in joined, f"evidence leaks {size} chars of the credential"
+
+    verdict = check_commit(diff, None, "feat: x")
+    assert not verdict.ok
+    assert secret[:6] not in verdict.reason, "block message leaks credential material"
+
+
+def test_gitleaks_escalation_is_actually_wired(monkeypatch):
+    """This escalation shipped as dead code once: defined, documented, never
+    called. A control that does not execute is the failure this module exists
+    to close, so the wiring itself is asserted rather than assumed."""
+    import check_mandatory_judges as mod
+
+    clean = (
+        "diff --git a/notes.md b/notes.md\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1,2 @@\n x\n"
+        "+an ordinary sentence\n"
+    )
+    assert not detect_security_relevance(clean), "fixture is not keyword-clean"
+
+    monkeypatch.setattr(mod, "_gitleaks_flags", lambda _diff: True)
+    assert detect_security_relevance(clean) == {"gitleaks flagged the staged diff"}
+
+    monkeypatch.setattr(mod, "_gitleaks_flags", lambda _diff: False)
+    assert not detect_security_relevance(clean)
+
+
+def test_gitleaks_is_not_consulted_once_the_diff_is_already_flagged(monkeypatch):
+    """It costs a subprocess and adds nothing to an already-flagged diff."""
+    import check_mandatory_judges as mod
+
+    called = []
+    monkeypatch.setattr(mod, "_gitleaks_flags", lambda d: called.append(d) or True)
+    detect_security_relevance(AUTH_DIFF)
+    assert not called, "gitleaks ran even though the regex floor already fired"
+
+
+def test_gitleaks_absent_binary_is_not_a_hit(monkeypatch):
+    """Optional by design: a machine without gitleaks keeps the regex floor."""
+    import check_mandatory_judges as mod
+
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    assert mod._gitleaks_flags("+anything at all") is False
+
+
+def test_gitleaks_misbehaviour_always_over_detects(monkeypatch):
+    """Every way the subprocess can fail must land on the same branch.
+
+    `(OSError, SubprocessError)` missed UnicodeDecodeError, which escaped to the
+    module-level handler and printed a recovery block naming a corrupt receipt —
+    sending the operator to delete a healthy one.
+    """
+    import subprocess
+
+    import check_mandatory_judges as mod
+
+    monkeypatch.setattr("shutil.which", lambda _n: "/usr/bin/gitleaks")
+    for boom in (
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
+        OSError("no such binary"),
+        subprocess.TimeoutExpired(cmd="gitleaks", timeout=20),
+        RuntimeError("something else entirely"),
+    ):
+
+        def raise_it(*_a, _e=boom, **_k):
+            raise _e
+
+        monkeypatch.setattr(subprocess, "run", raise_it)
+        assert mod._gitleaks_flags("+x") is True, f"{type(boom).__name__} did not over-detect"
+
+
+def test_binary_diff_never_reaches_the_handler_or_stderr(tmp_path):
+    """One non-UTF-8 byte in a staged diff must not dump the diff to stderr.
+
+    UnicodeDecodeError's repr embeds the entire offending bytes object, so a
+    `text=True` read without `errors=` turns a decode failure into full
+    disclosure of the staged diff — credentials included.
+    """
+    import subprocess
+
+    secret = _FAKE["stripe"]
+    repo = tmp_path / "r"
+    repo.mkdir()
+    root = pathlib.Path(__file__).resolve().parent.parent
+    run = lambda *a: subprocess.run(a, cwd=repo, capture_output=True, text=True)  # noqa: E731
+    run("git", "init", "-q", ".")
+    run("git", "config", "user.email", "t@t.t")
+    run("git", "config", "user.name", "t")
+    (repo / "seed.txt").write_text("seed\n")
+    run("git", "add", "-A")
+    run("git", "commit", "-qm", "seed\n\nSecurity-Review: skipped -- fixture")
+    (repo / "bin.dat").write_bytes(b"\xff cfg = " + secret.encode() + b"\n")
+    run("git", "add", "-A")
+
+    done = subprocess.run(
+        ["python3", str(root / "scripts" / "check_mandatory_judges.py"), "/dev/null"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    assert secret not in done.stderr, "staged credential was echoed to stderr"
+    assert secret not in done.stdout
+    assert "UnicodeDecodeError" not in done.stderr, "decode error escaped to the handler"

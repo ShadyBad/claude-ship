@@ -82,7 +82,7 @@ SURVEY_AUTO = {"off", "queue", "promote"}
 def load_raw(path: Path = DEFAULT_PATH) -> dict[str, Any]:
     """Parse the config file, or return {} if it is absent or unreadable."""
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
     try:
@@ -142,7 +142,7 @@ def validate(path: Path = DEFAULT_PATH) -> list[str]:
     problems: list[str] = []
     if path.exists():
         try:
-            parsed = json.loads(path.read_text())
+            parsed = json.loads(path.read_text(encoding="utf-8", errors="replace"))
         except json.JSONDecodeError as exc:
             return [f"{path}: not valid JSON ({exc})"]
         except OSError as exc:

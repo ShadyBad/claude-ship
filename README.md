@@ -205,13 +205,28 @@ not:
   — husky, pre-commit, git-lfs — will silently never run. Move those into
   `hooks/git/` alongside this one.
 - **The content detector is incomplete, and will stay incomplete.** It is a
-  lexical scan, and three successive review rounds each found a real identifier
-  shape it missed — `new_api_key` (snake_case, `_` is a word character),
-  `clientSecret` (camelCase), and semantic weakenings that carry no keyword at
-  all like `verify=False`. Each was fixed; the next round will likely find
-  another. Path matching is the stable signal here and content matching is a
-  bonus, so do not read a clean gate as "no secret in this diff". If that
-  guarantee is what you want, add a real scanner alongside it.
+  lexical scan, and successive review rounds each found a real identifier shape
+  it missed — `new_api_key` (snake_case, `_` is a word character),
+  `clientSecret` (camelCase), `AWSSecretKey` (uppercase run), and semantic
+  weakenings carrying no keyword at all like `verify=False`. Each was fixed;
+  another shape probably exists. Three things reduce the gap: keyword matching,
+  credential-shape matching for secrets pasted with no variable name
+  (`ghp_…`, `AKIA…`, PEM headers, JWTs), and — when the binary is installed —
+  **gitleaks**, run over the staged diff as an escalation.
+
+  Measured cost: ~16ms on a small diff, ~1.2s on a 3.5MB one. The timeout is
+  20s, so a wedged gitleaks charges a silent 20-second stall on an otherwise
+  clean commit before the gate gives up and treats the diff as security-
+  relevant. That tail is the worst case worth knowing about.
+
+  gitleaks is optional on purpose. The regex floor is unconditional, so a
+  machine without it keeps every guarantee stated here; gitleaks only ever adds
+  coverage. It exits 1 both for "leaks found" and for its own errors, and those
+  cannot be told apart, so the gate treats 1 as security-relevant either way —
+  over-detecting, never under-detecting. Enforcement therefore varies slightly
+  by machine, which is the price of not making it a hard dependency.
+
+  Even so: do not read a clean gate as "no secret in this diff".
 - **Merges, rebases, and cherry-picks are not covered.** Git does not run
   `commit-msg` for a merge, and replaying a commit through `git rebase` or
   `git cherry-pick` does not re-run it either. The gate covers the commit that

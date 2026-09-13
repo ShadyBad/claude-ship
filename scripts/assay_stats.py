@@ -63,7 +63,9 @@ def load(log_path: Path, since: str | None = None) -> tuple[list[dict[str, Any]]
 
     records: list[dict[str, Any]] = []
     warnings: list[str] = []
-    for lineno, line in enumerate(log_path.read_text(encoding="utf-8").splitlines(), start=1):
+    for lineno, line in enumerate(
+        log_path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+    ):
         if not line.strip():
             continue
         try:

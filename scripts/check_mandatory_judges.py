@@ -93,6 +93,21 @@ SECURITY_CAMEL = re.compile(
 #: line, so the asymmetry is priced in favour of coverage. The trailer rate in
 #: `git log --grep` is what decides whether this judgement was right.
 
+#: Credential shapes that carry no keyword at all. A secret pasted without a
+#: variable name -- a bare `ghp_...` in a config line, a PEM header, a JWT --
+#: matched nothing above, which is a whole class of leak the keyword scan
+#: cannot see by construction. These are prefix/format matches, so they are
+#: high precision and effectively never fire on prose.
+SECURITY_SHAPES = re.compile(
+    r"(ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"|sk_live_[A-Za-z0-9]{16,}|rk_live_[A-Za-z0-9]{16,}"
+    r"|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}"
+    r"|glpat-[A-Za-z0-9_-]{16,})"
+)
+
 #: Semantic weakenings that carry none of the words above. A lexical detector
 #: cannot be complete -- these are the cheap, common ones, added because a judge
 #: named each as a diff that would have sailed through: a permissive CORS
@@ -146,6 +161,32 @@ def _changed_paths(staged_diff: str) -> list[str] | None:
     return paths
 
 
+#: Shape -> human name. The evidence string is printed to stderr from a git
+#: hook, so it lands in terminal scrollback and CI logs. A secret scanner that
+#: echoes even a prefix of the value it found is leaking the thing it exists to
+#: protect, so evidence names the pattern and never quotes the match.
+_SHAPE_NAMES = (
+    ("ghp_", "github-pat"),
+    ("gho_", "github-oauth"),
+    ("github_pat_", "github-pat"),
+    ("sk_live_", "stripe-live-key"),
+    ("rk_live_", "stripe-restricted-key"),
+    ("AKIA", "aws-access-key"),
+    ("ASIA", "aws-temp-key"),
+    ("xox", "slack-token"),
+    ("-----BEGIN", "private-key-block"),
+    ("eyJ", "jwt"),
+    ("glpat-", "gitlab-pat"),
+)
+
+
+def _shape_name(match: str) -> str:
+    for prefix, name in _SHAPE_NAMES:
+        if match.startswith(prefix):
+            return name
+    return "credential-shape"
+
+
 def detect_security_relevance(staged_diff: str) -> set[str]:
     """Evidence that this diff is security-relevant, as human-readable strings.
 
@@ -167,9 +208,62 @@ def detect_security_relevance(staged_diff: str) -> set[str]:
             hits.add(f"content:{match.lower()}")
         for match in SECURITY_CAMEL.findall(line):
             hits.add(f"content:{match.lower()}")
+        for match in SECURITY_SHAPES.findall(line):
+            hits.add(f"shape:{_shape_name(match)}")
         for match in SECURITY_SEMANTICS.findall(line):
             hits.add(f"semantic:{match.strip().lower()}")
+
+    # Escalation, only when the cheap scan found nothing: gitleaks costs a
+    # subprocess, and there is nothing to add once the diff is already flagged.
+    if not hits and _gitleaks_flags(staged_diff):
+        hits.add("gitleaks flagged the staged diff")
     return hits
+
+
+def _gitleaks_flags(staged_diff: str) -> bool:
+    """True when gitleaks says this diff carries a secret. False when absent.
+
+    Optional by design: the regex floor above is unconditional, so a machine
+    without gitleaks keeps every guarantee this module claims. gitleaks only
+    ever ADDS coverage.
+
+    It exits 1 both for "leaks found" and for its own internal errors, which
+    cannot be told apart from the exit code. A fail-closed gate resolves that
+    the conservative way: treat 1 as security-relevant either way, so an error
+    over-detects and the trailer clears it.
+
+    Measured cost on the commit path: ~16ms for a small diff, ~1.2s for a
+    3.5MB one. The 20s timeout is only ever charged by a genuine hang.
+
+    Known and unfixable from here: a `gitleaks` shim earlier on PATH that exits
+    0 without reading stdin returns False, which is indistinguishable from the
+    binary being absent. Verifying the identity of a binary is out of scope for
+    a commit hook.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("gitleaks"):
+        return False
+    try:
+        done = subprocess.run(
+            ["gitleaks", "stdin", "--no-banner"],
+            input=staged_diff,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=20,
+        )
+    except Exception:  # noqa: BLE001
+        # Deliberately bare. `(OSError, SubprocessError)` missed
+        # UnicodeDecodeError, which `text=True` raises when the binary writes
+        # non-UTF-8 to stdout -- that escaped to the module handler and printed
+        # a recovery block naming a corrupt receipt, sending the operator to
+        # delete a healthy one. Every way this subprocess can misbehave must
+        # land on the same over-detect branch; `errors="replace"` above makes
+        # that path unreachable, and this makes the next one harmless too.
+        return True  # could not run it: assume the worst, never the best
+    return done.returncode != 0
 
 
 def skip_trailer(commit_msg: str) -> str | None:
@@ -204,6 +298,7 @@ def _check_receipt(staged_diff: str, receipt: dict | None) -> Verdict:
     if digest != actual:
         return Verdict(False, "receipt is stale: it describes a different diff")
 
+    seen_security: str | None = None
     for entry in judges:
         if not isinstance(entry, dict):
             continue
@@ -218,9 +313,21 @@ def _check_receipt(staged_diff: str, receipt: dict | None) -> Verdict:
         # roster, where judge 2 is the only entry carrying the word; stated
         # exactly rather than claimed broadly, because a comment promising more
         # than its code is the drift this whole gate exists to stop.
-        if re.search(rf"(?:^|\s){MANDATORY_JUDGE}(?:\s|$)", name) and verdict in REPORTED:
-            return Verdict(True, f"security judge reported: {verdict}")
+        if re.search(rf"(?:^|\s){MANDATORY_JUDGE}(?:\s|$)", name):
+            if verdict in REPORTED:
+                return Verdict(True, f"security judge reported: {verdict}")
+            # Receipt-controlled and printed to stderr: clamp it so a long or
+            # multi-line value cannot forge a banner inside the real one. A
+            # forged receipt is outside the threat model, but cheap to bound.
+            seen_security = (verdict or "(no verdict)").split("\n")[0][:40]
 
+    if seen_security:
+        # "no security judge verdict" would describe the wrong state: the judge
+        # ran and refused. The receipt is hash-keyed, so a refusal that still
+        # matches means the requested changes were never made.
+        return Verdict(
+            False, f"security judge verdict is {seen_security}, which does not license a commit"
+        )
     return Verdict(False, "no security judge verdict in receipt")
 
 
@@ -265,18 +372,41 @@ def _main(argv: list[str]) -> int:
         print("mandatory-judge gate: no commit message file given", file=sys.stderr)
         return 1
 
+    # Every decode path in this module carries `errors=`, not just the ones that
+    # were caught leaking. Relying on the handler's type-name-only print as the
+    # sole defence is one layer; this is the other. The missed-twin pattern has
+    # recurred twice here, so the rule is now all of them, always.
     root = pathlib.Path(
         subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=True,
         ).stdout.strip()
     )
+    # `errors="replace"` is not cosmetic. Without it one non-UTF-8 byte in the
+    # staged diff raises UnicodeDecodeError, whose repr embeds the ENTIRE
+    # offending bytes object -- so the handler below would print the whole
+    # staged diff, live credentials and all, to stderr. The gitleaks call above
+    # already learned this; this is its twin, missed on the first pass.
     diff = subprocess.run(
-        ["git", "diff", "--cached"], capture_output=True, text=True, check=True
+        ["git", "diff", "--cached"],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=True,
     ).stdout
     receipt_path = root / ".assay" / "judge-receipt.json"
-    receipt = json.loads(receipt_path.read_text()) if receipt_path.exists() else None
+    receipt = (
+        json.loads(receipt_path.read_text(encoding="utf-8", errors="replace"))
+        if receipt_path.exists()
+        else None
+    )
 
-    verdict = check_commit(diff, receipt, pathlib.Path(argv[1]).read_text())
+    verdict = check_commit(
+        diff, receipt, pathlib.Path(argv[1]).read_text(encoding="utf-8", errors="replace")
+    )
     if verdict.ok:
         return 0
 
@@ -306,5 +436,12 @@ if __name__ == "__main__":
         # suppresses its escape text. An internal error must reach that text --
         # a truncated receipt would otherwise block every commit in the repo
         # with a bare JSONDecodeError and no way out.
-        print(f"mandatory-judge gate errored, failing closed: {exc!r}", file=sys.stderr)
+        # Type name only. An exception's repr can embed whatever payload it was
+        # constructed from -- UnicodeDecodeError carries the entire offending
+        # byte string -- so printing `{exc!r}` from a gate that inspects secrets
+        # is a disclosure channel. Never widen this to repr or str.
+        print(
+            f"mandatory-judge gate errored, failing closed: {type(exc).__name__}",
+            file=sys.stderr,
+        )
         sys.exit(2)
